@@ -5,6 +5,7 @@ import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import os
+import time
 
 # ---------------------------------------------------------
 # 1. 초기 설정 및 Google Sheets 연결
@@ -16,14 +17,14 @@ if os.path.exists("style.css"):
     with open("style.css") as f:
         st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
 
-# API 키 설정
+# API 키 설정 확인
 if "GOOGLE_API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
 else:
-    st.error("API Key가 설정되지 않았습니다. .streamlit/secrets.toml 파일을 확인해주세요.")
+    st.error("🚨 API Key가 설정되지 않았습니다. .streamlit/secrets.toml 파일을 확인해주세요.")
     st.stop()
 
-# [핵심] 구글 시트 연결 함수 (캐싱하여 속도 최적화)
+# [Google Sheets 연결]
 @st.cache_resource
 def init_connection():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -31,15 +32,20 @@ def init_connection():
     client = gspread.authorize(creds)
     return client
 
-# 시트 데이터 가져오기/쓰기 헬퍼 함수들
 def get_db_sheet():
     client = init_connection()
-    # [Tip] 시트 이름으로 찾기 (에러나면 open_by_key 사용 권장)
-    sh = client.open("Joshua_AI_DB") 
-    return sh
+    try:
+        # 시트 이름으로 열기 (에러나면 공유 여부 확인)
+        return client.open("Joshua_AI_DB")
+    except gspread.SpreadsheetNotFound:
+        st.error("❌ 'Joshua_AI_DB' 시트를 찾을 수 없습니다. 서비스 계정을 시트에 초대했는지 확인하세요.")
+        st.stop()
 
+# ---------------------------------------------------------
+# 2. 데이터베이스(DB) 함수 모음
+# ---------------------------------------------------------
 def get_user_info(user_id):
-    """Users 시트에서 특정 유저 정보를 가져옴"""
+    """Users 시트에서 유저 정보 조회"""
     sh = get_db_sheet()
     ws = sh.worksheet("Users")
     records = ws.get_all_records()
@@ -49,38 +55,41 @@ def get_user_info(user_id):
     return None
 
 def update_user_status(user_id, new_status):
-    """Users 시트에서 상태(status) 업데이트"""
+    """학부모가 상태 변경 시 호출"""
     sh = get_db_sheet()
     ws = sh.worksheet("Users")
-    cell = ws.find(user_id)
-    # status는 D열(4번째)이라고 가정
-    ws.update_cell(cell.row, 4, new_status)
-    st.cache_data.clear() # 캐시 초기화하여 즉시 반영
+    try:
+        cell = ws.find(user_id)
+        # D열(4번째)이 status라고 가정
+        ws.update_cell(cell.row, 4, new_status)
+        st.cache_data.clear() # 캐시 초기화 (즉시 반영 위함)
+    except:
+        st.error("유저를 찾을 수 없습니다.")
 
 def add_log(user_id, subject, question, answer):
-    """Logs 시트에 대화 기록 추가 (답변 길면 자름)"""
+    """대화 로그 저장 (답변 20자 제한)"""
     sh = get_db_sheet()
     ws = sh.worksheet("Logs")
     timestamp = (datetime.datetime.now() + datetime.timedelta(hours=9)).strftime("%Y-%m-%d %H:%M:%S")
     
-    # [요청 반영 1] 답변이 20자를 넘으면 자르고 '...' 붙임
+    # [요청 반영] 답변이 길면 20자로 자르고 '...' 추가
     short_answer = answer[:20] + "..." if len(answer) > 20 else answer
     
     ws.append_row([timestamp, user_id, subject, question, short_answer])
 
 def get_logs(user_id=None):
-    """Logs 시트에서 기록 가져오기"""
+    """로그 조회 (빈 시트 에러 방지 포함)"""
     sh = get_db_sheet()
     ws = sh.worksheet("Logs")
     records = ws.get_all_records()
     
-    # 데이터가 없을 경우 빈 프레임 반환 (에러 방지)
+    # 데이터가 없거나 헤더만 있는 경우 방어 로직
     if not records:
-        df = pd.DataFrame(columns=['time', 'user_id', 'subject', 'question', 'answer'])
-    else:
-        df = pd.DataFrame(records)
+        return pd.DataFrame(columns=['time', 'user_id', 'subject', 'question', 'answer'])
     
-    # 컬럼 헤더가 잘못되었을 경우 방어 로직
+    df = pd.DataFrame(records)
+    
+    # 필수 컬럼이 없는 경우(시트 생성 직후) 방어
     if 'user_id' not in df.columns:
         return pd.DataFrame(columns=['time', 'user_id', 'subject', 'question', 'answer'])
 
@@ -90,42 +99,94 @@ def get_logs(user_id=None):
     return df
 
 # ---------------------------------------------------------
-# 2. 모델 연결
+# 3. AI 모델 연결 (Robust Version)
 # ---------------------------------------------------------
 @st.cache_resource
 def load_gemini_model():
-    # 무료 한도가 넉넉한 1.5 Flash 모델로 고정
-    return genai.GenerativeModel('gemini-1.5-flash')
+    """
+    가장 안정적이고 무료 쿼터가 많은 'Flash' 모델을 자동으로 찾습니다.
+    404 에러와 429(수량 제한) 에러를 모두 방지합니다.
+    """
+    try:
+        # 1. 내 키로 접근 가능한 모든 모델 리스트업
+        all_models = [m.name for m in genai.list_models()]
+        
+        # 2. 우선순위: 1.5 Flash (안정적) -> 1.0 Pro (구관이 명관)
+        # *주의: 'latest'나 '2.5' 같은 실험적 모델은 제한이 심해 제외함
+        priority_targets = [
+            "models/gemini-1.5-flash",
+            "models/gemini-1.5-flash-001",
+            "models/gemini-1.5-flash-002",
+            "models/gemini-1.0-pro"
+        ]
+        
+        selected_model = None
+        for target in priority_targets:
+            if target in all_models:
+                selected_model = target
+                break
+        
+        # 3. 정 없으면 아무 'flash' 모델이나 잡음
+        if not selected_model:
+            selected_model = next((m for m in all_models if 'flash' in m), None)
+            
+        if selected_model:
+            print(f"✅ Connected Model: {selected_model}")
+            return genai.GenerativeModel(selected_model)
+        else:
+            st.error("사용 가능한 모델을 찾지 못했습니다.")
+            return None
+            
+    except Exception as e:
+        st.error(f"모델 연결 실패: {e}")
+        return None
 
+# 모델 로드
 model = load_gemini_model()
 
 def get_ai_response(status, subject, question):
-    if not model: return "AI 모델 연결 실패"
+    if not model: return "AI 모델이 연결되지 않았습니다."
     
+    # 페르소나 설정
     if status == "studying":
-        system_prompt = f"당신은 {subject} 튜터입니다. 공부 질문에만 답하고, 잡담은 단호히 거절하세요."
+        system_prompt = f"""
+        당신은 [Joshua's AI Learning Manager]의 '{subject}' 전담 튜터입니다.
+        현재 학생은 '공부 시간' 중입니다.
+        
+        [행동 지침]
+        1. 오직 '{subject}' 교과 내용과 관련된 질문에만 답변하세요.
+        2. 학생이 게임, 연예인, 가십 등 공부와 무관한 이야기를 하면 "지금은 공부 시간입니다. 학습에 집중해주세요."라고 단호하게 거절하세요.
+        3. 정답을 바로 알려주기보다, 힌트를 주고 유도 질문을 던지세요.
+        """
     else:
-        system_prompt = "당신은 친절한 친구입니다. 자유롭게 대화하세요."
+        system_prompt = f"""
+        당신은 [Joshua's AI Learning Manager]의 친절한 친구입니다.
+        현재 학생은 '쉬는 시간' 중입니다.
+        
+        [행동 지침]
+        1. 학생과 자유롭고 재미있게 대화하세요.
+        2. 공감해주고 격려해주세요.
+        """
         
     try:
-        return model.generate_content(f"{system_prompt}\n\n[질문]: {question}").text
+        response = model.generate_content(f"{system_prompt}\n\n[학생 질문]: {question}")
+        return response.text
     except Exception as e:
-        return f"에러: {e}"
+        return f"AI 응답 오류: {e}"
 
 # ---------------------------------------------------------
-# 3. 로그인 페이지 UI
+# 4. 페이지 UI: 로그인
 # ---------------------------------------------------------
 def login_page():
-    st.markdown("<h1 style='text-align: center;'>🏫 Joshua's AI Learning Manager</h1>", unsafe_allow_html=True)
+    st.markdown("<br><br><h1 style='text-align: center;'>🏫 Joshua's AI Learning Manager</h1>", unsafe_allow_html=True)
     
     col1, col2, col3 = st.columns([1,2,1])
     with col2:
-        # [요청 반영 2] MVP 테스트 편의를 위한 계정 정보 노출
         st.info("""
-        **[MVP 테스트 계정 정보]**
-        * **학생:** joshua, david
-        * **부모:** myna5004
-        * **비번:** 1234 (또는 오늘 날짜 4자리)
+        **[테스트 계정 정보]**
+        - 학생: `joshua`, `david`
+        - 부모: `myna5004`
+        - 비번: `1234` (또는 오늘날짜)
         """)
         
         user_id = st.text_input("아이디")
@@ -140,106 +201,128 @@ def login_page():
                 st.session_state['logged_in'] = True
                 st.rerun()
             else:
-                st.error("로그인 실패! 아이디와 비밀번호를 확인하세요.")
+                st.error("아이디 또는 비밀번호가 틀렸습니다.")
 
 # ---------------------------------------------------------
-# 4. 학생 페이지 UI
+# 5. 페이지 UI: 학생 (Joshua, David)
 # ---------------------------------------------------------
 def student_page():
     user = st.session_state['user']
-    # 실시간 상태 확인을 위해 DB 재조회
-    current_user_info = get_user_info(user['user_id'])
-    status = current_user_info['status']
+    # 실시간 상태 확인 (부모가 변경했을 수 있으므로)
+    current_info = get_user_info(user['user_id'])
+    status = current_info['status'] if current_info else user['status']
     
     with st.sidebar:
         st.header(f"🎓 {user['name']}")
-        subject = st.radio("과목", ["국어", "영어", "수학", "과학", "기타"])
+        st.markdown(f"Status: **{status}**")
+        st.divider()
         
-        st.markdown("---")
-        st.write(f"**최근 {subject} 기록**")
-        logs_df = get_logs(user['user_id'])
-        if not logs_df.empty:
-            # 해당 과목 로그만 필터링
-            subj_logs = logs_df[logs_df['subject'] == subject].tail(5)
-            for idx, row in subj_logs.iloc[::-1].iterrows():
-                # 시간 포맷 안전 처리
-                time_str = str(row['time'])
-                display_time = time_str[5:16] if len(time_str) > 10 else time_str
-                
-                with st.expander(f"{display_time}"):
+        st.subheader("과목 선택")
+        subject = st.radio("Subject", ["국어", "영어", "수학", "과학", "기타"], label_visibility="collapsed")
+        
+        st.divider()
+        st.caption(f"최근 {subject} 질문")
+        logs = get_logs(user['user_id'])
+        if not logs.empty:
+            # 해당 과목 & 최신순 5개
+            my_logs = logs[logs['subject'] == subject].tail(5).iloc[::-1]
+            for _, row in my_logs.iterrows():
+                # 시간 깔끔하게 (시:분)
+                t_str = str(row['time'])
+                time_only = t_str[11:16] if len(t_str) > 15 else t_str
+                with st.expander(f"[{time_only}] {row['question'][:10]}..."):
                     st.write(f"Q: {row['question']}")
-                    st.caption(f"A: {row['answer']}") 
+                    st.caption(f"A: {row['answer']}") # 여기는 전체 내용 보여줘도 됨 (읽기용이니까)
 
+    # 메인 화면
     col1, col2 = st.columns([8, 2])
-    with col1: st.title(f"{subject} 학습 튜터")
+    with col1:
+        st.title(f"{subject} 튜터 🤖")
     with col2:
-        if status == 'studying':
+        if status == "studying":
             st.markdown('<div class="status-badge status-study">🔥 공부 시간</div>', unsafe_allow_html=True)
         else:
             st.markdown('<div class="status-badge status-break">🍀 쉬는 시간</div>', unsafe_allow_html=True)
+            
+    # 채팅 인터페이스
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
 
-    if "messages" not in st.session_state: st.session_state.messages = []
-    
     for msg in st.session_state.messages:
-        with st.chat_message(msg["role"]): st.markdown(msg["content"])
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
 
-    if prompt := st.chat_input("질문 입력..."):
+    if prompt := st.chat_input("질문을 입력하세요..."):
         st.chat_message("user").markdown(prompt)
         st.session_state.messages.append({"role": "user", "content": prompt})
         
-        with st.spinner("생각 중..."):
-            ai_reply = get_ai_response(status, subject, prompt)
+        with st.spinner("AI 선생님이 생각 중입니다..."):
+            response = get_ai_response(status, subject, prompt)
         
-        st.chat_message("assistant").markdown(ai_reply)
-        st.session_state.messages.append({"role": "assistant", "content": ai_reply})
+        st.chat_message("assistant").markdown(response)
+        st.session_state.messages.append({"role": "assistant", "content": response})
         
-        add_log(user['user_id'], subject, prompt, ai_reply)
+        # 로그 저장 (답변은 함수 내부에서 20자로 잘림)
+        add_log(user['user_id'], subject, prompt, response)
 
 # ---------------------------------------------------------
-# 5. 학부모 페이지 UI
+# 6. 페이지 UI: 부모님 (Myna5004)
 # ---------------------------------------------------------
 def parent_page():
-    st.title("👨‍👩‍👧‍👦 학부모 관리 모드 (Google Sheets)")
+    st.title("👨‍👩‍👧‍👦 학부모 관리 대시보드")
+    st.info("실시간으로 자녀의 학습 상태를 제어하고 기록을 확인합니다.")
     
     sh = get_db_sheet()
     users = sh.worksheet("Users").get_all_records()
-    student_list = [u['user_id'] for u in users if u['role'] == 'student']
+    students = [u for u in users if u['role'] == 'student']
+    student_ids = [u['user_id'] for u in students]
     
     with st.sidebar:
         st.header("자녀 선택")
-        target_id = st.selectbox("관리할 자녀", student_list)
-        target_child = next((u for u in users if u['user_id'] == target_id), None)
+        target_id = st.selectbox("학생", student_ids)
+        target_user = next((u for u in students if u['user_id'] == target_id), None)
         
-        if target_child:
-            st.info(f"현재 상태: {target_child['status']}")
+        st.divider()
+        if st.button("로그아웃"):
+            st.session_state.clear()
+            st.rerun()
 
-    st.subheader(f"{target_child['name']} 상태 관리")
-    col1, col2 = st.columns([2, 8])
+    # 메인 제어 패널
+    col1, col2 = st.columns([1, 2])
+    
     with col1:
-        if target_child['status'] == 'studying':
-            if st.button("쉬는 시간으로 변경"):
+        st.subheader("상태 제어")
+        st.write(f"현재 상태: **{target_user['status']}**")
+        
+        if target_user['status'] == 'studying':
+            if st.button("☕️ 쉬는 시간으로 변경", use_container_width=True):
                 update_user_status(target_id, 'break')
-                st.success("변경 완료! (잠시 후 반영됩니다)")
+                st.success("변경되었습니다!")
+                time.sleep(1)
                 st.rerun()
         else:
-            if st.button("공부 시간으로 변경", type="primary"):
+            if st.button("🔥 공부 시간으로 변경", type="primary", use_container_width=True):
                 update_user_status(target_id, 'studying')
-                st.success("변경 완료! (잠시 후 반영됩니다)")
+                st.success("변경되었습니다!")
+                time.sleep(1)
                 st.rerun()
-    
-    st.markdown("---")
-    st.subheader("📝 전체 학습 로그 (실시간)")
-    
-    logs_df = get_logs(target_id)
-    if not logs_df.empty:
-        # 시간 역순 정렬
-        logs_df = logs_df.sort_values(by='time', ascending=False)
-        st.dataframe(logs_df[['time', 'subject', 'question', 'answer']], use_container_width=True)
-    else:
-        st.caption("아직 기록이 없습니다.")
+                
+    with col2:
+        st.subheader("실시간 학습 로그")
+        logs = get_logs(target_id)
+        if not logs.empty:
+            # 최신순 정렬
+            logs = logs.sort_values(by='time', ascending=False)
+            st.dataframe(
+                logs[['time', 'subject', 'question', 'answer']], 
+                use_container_width=True,
+                hide_index=True
+            )
+        else:
+            st.warning("아직 학습 기록이 없습니다.")
 
 # ---------------------------------------------------------
-# 6. 메인 실행 라우터 (이 부분이 빠져서 화면이 안 나왔던 것!)
+# 7. 메인 라우터 (앱 실행 진입점)
 # ---------------------------------------------------------
 if "logged_in" not in st.session_state:
     st.session_state['logged_in'] = False
@@ -247,15 +330,13 @@ if "logged_in" not in st.session_state:
 if not st.session_state['logged_in']:
     login_page()
 else:
-    # 로그인 상태일 때 사이드바에 로그아웃 버튼 표시
-    with st.sidebar:
-        st.markdown("---")
-        if st.button("로그아웃"):
-            st.session_state.clear()
-            st.rerun()
-            
-    # 역할에 따라 페이지 분기
+    # 학생/부모 분기
     if st.session_state['user']['role'] == 'student':
+        # 학생은 사이드바에 로그아웃 버튼을 따로 둠
+        with st.sidebar:
+            if st.button("로그아웃"):
+                st.session_state.clear()
+                st.rerun()
         student_page()
     else:
         parent_page()
