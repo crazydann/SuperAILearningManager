@@ -129,7 +129,7 @@ def get_ai_response(user_id, subject, question):
 # 3. 화면 UI: 로그인 페이지
 # ---------------------------------------------------------
 def login_page():
-    st.markdown("<h1 style='text-align: center;'>🏫 Super AI Agent</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='text-align: center;'>Joshua's AI Learning Manager</h1>", unsafe_allow_html=True)
     
     col1, col2, col3 = st.columns([1,2,1])
     with col2:
