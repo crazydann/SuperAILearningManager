@@ -117,7 +117,7 @@ def ask_gemini(user_text):
 if 'chat_history' not in st.session_state: st.session_state.chat_history = []
 if 'focus_score' not in st.session_state: st.session_state.focus_score = 50
 
-st.title("🏫 Joshua S.AI Learning Manager : 자동 모델 연결")
+st.title("🏫 Joshua S.AI Learning Manager")
 
 # 상단에 연결된 모델 정보 표시
 if model:
