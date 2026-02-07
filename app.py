@@ -1,5 +1,5 @@
 import streamlit as st
-import google.generativeai as genai
+from groq import Groq
 import datetime
 import pandas as pd
 import gspread
@@ -17,15 +17,13 @@ if os.path.exists("style.css"):
     with open("style.css") as f:
         st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
 
-# API 키 설정
-if "GOOGLE_API_KEY" in st.secrets:
-    genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-else:
-    st.error("🚨 API Key가 없습니다. .streamlit/secrets.toml을 확인해주세요.")
+# Groq API 키 확인
+if "GROQ_API_KEY" not in st.secrets:
+    st.error("🚨 Groq API Key가 없습니다. .streamlit/secrets.toml을 확인해주세요.")
     st.stop()
 
 # ---------------------------------------------------------
-# 2. Google Sheets 연결
+# 2. Google Sheets 연결 (기존과 동일)
 # ---------------------------------------------------------
 @st.cache_resource
 def init_connection():
@@ -38,10 +36,10 @@ def get_db_sheet():
     try:
         return client.open("Joshua_AI_DB")
     except gspread.SpreadsheetNotFound:
-        st.error("❌ 'Joshua_AI_DB' 시트를 찾을 수 없습니다. 서비스 계정 초대를 확인하세요.")
+        st.error("❌ 'Joshua_AI_DB' 시트를 찾을 수 없습니다.")
         st.stop()
 
-# DB 헬퍼 함수
+# DB 헬퍼 함수들
 def get_user_info(user_id):
     sh = get_db_sheet()
     ws = sh.worksheet("Users")
@@ -56,7 +54,7 @@ def update_user_status(user_id, new_status):
     ws = sh.worksheet("Users")
     try:
         cell = ws.find(user_id)
-        ws.update_cell(cell.row, 4, new_status) # D열(4) 업데이트
+        ws.update_cell(cell.row, 4, new_status)
         st.cache_data.clear()
     except:
         st.error("유저를 찾을 수 없습니다.")
@@ -85,65 +83,54 @@ def get_logs(user_id=None):
     return df
 
 # ---------------------------------------------------------
-# 3. AI 모델 연결 (최종 수정: 강제 연결 방식)
+# 3. AI 모델 연결 (Groq 버전) 🚀
 # ---------------------------------------------------------
 @st.cache_resource
-def load_gemini_model():
-    """
-    복잡한 검색 없이 표준 모델명을 순차적으로 시도하여 무조건 연결합니다.
-    """
-    # 시도할 모델 우선순위 (Flash -> Pro -> 구형 Pro)
-    candidates = [
-        'gemini-1.5-flash',
-        'gemini-1.5-flash-latest',
-        'gemini-1.5-pro',
-        'gemini-pro'
-    ]
+def load_groq_client():
+    return Groq(api_key=st.secrets["GROQ_API_KEY"])
 
-    for model_name in candidates:
-        try:
-            print(f"📡 연결 시도: {model_name}")
-            model = genai.GenerativeModel(model_name)
-            # 연결 테스트 (실제 통신 확인)
-            model.generate_content("test")
-            print(f"✅ 연결 성공: {model_name}")
-            return model
-        except Exception:
-            continue
-    
-    # 위 후보가 다 안 되면 목록에서 검색 (마지막 수단)
-    try:
-        for m in genai.list_models():
-            if 'generateContent' in m.supported_generation_methods:
-                if '2.5' not in m.name and 'experimental' not in m.name:
-                    return genai.GenerativeModel(m.name)
-    except:
-        pass
-
-    st.error("❌ 사용 가능한 Gemini 모델을 찾을 수 없습니다. API 키를 확인하세요.")
-    return None
-
-model = load_gemini_model()
+client = load_groq_client()
 
 def get_ai_response(status, subject, question):
-    if not model: return "🤖 AI 모델 연결 실패"
+    if not client: return "AI 클라이언트 연결 실패"
     
+    # 1. 시스템 페르소나 설정 (AI의 역할 부여)
     if status == "studying":
-        system_prompt = f"""
-        당신은 [Joshua's AI Learning Manager]의 '{subject}' 튜터입니다.
-        현재 학생은 '공부 시간'입니다. '{subject}' 관련 질문에만 답하고, 잡담은 단호히 거절하세요.
+        system_content = f"""
+        당신은 [Joshua's AI Learning Manager]의 '{subject}' 전담 튜터입니다.
+        현재 학생은 '공부 시간'입니다.
+        
+        지침:
+        1. 오직 '{subject}' 관련 질문에만 답변하세요.
+        2. 공부와 무관한 질문(게임, 잡담 등)은 "지금은 공부 시간입니다."라고 정중히 거절하세요.
+        3. 정답을 바로 주지 말고, 스스로 생각할 수 있게 힌트를 주세요.
+        4. 답변은 한국어로 친절하게 해주세요.
         """
     else:
-        system_prompt = f"""
+        system_content = f"""
         당신은 [Joshua's AI Learning Manager]의 친절한 친구입니다.
-        현재 학생은 '쉬는 시간'입니다. 자유롭고 재미있게 대화하세요.
+        현재 학생은 '쉬는 시간'입니다. 자유롭고 재미있게 한국어로 대화하세요.
         """
         
     try:
-        response = model.generate_content(f"{system_prompt}\n\n[질문]: {question}")
-        return response.text
+        # 2. Groq에게 질문 던지기 (모델: Llama 3.3 70B - 성능/속도 최강)
+        completion = client.chat.completions.create(
+            model="llama-3.3-70b-versatile", 
+            messages=[
+                {"role": "system", "content": system_content},
+                {"role": "user", "content": question}
+            ],
+            temperature=0.6, # 창의성 조절 (0.5~0.7 적당)
+            max_tokens=1024, # 답변 최대 길이
+            top_p=1,
+            stream=False,
+            stop=None,
+        )
+        
+        return completion.choices[0].message.content
+        
     except Exception as e:
-        return f"⚠️ 에러 발생: {e}"
+        return f"⚠️ Groq 에러 발생: {e}"
 
 # ---------------------------------------------------------
 # 4. UI 및 실행 로직
@@ -152,7 +139,7 @@ def login_page():
     st.markdown("<br><h1 style='text-align: center;'>🏫 Joshua's AI Learning Manager</h1>", unsafe_allow_html=True)
     col1, col2, col3 = st.columns([1,2,1])
     with col2:
-        st.info("테스트 계정: joshua / david / myna5004 (비번: 오늘날짜)")
+        st.info("테스트 계정: joshua / david / myna5004 (비번: 1234)")
         user_id = st.text_input("아이디")
         password = st.text_input("비밀번호", type="password")
         
@@ -205,7 +192,7 @@ def student_page():
     if prompt := st.chat_input("질문을 입력하세요..."):
         st.chat_message("user").markdown(prompt)
         st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.spinner("생각 중..."):
+        with st.spinner("AI 선생님이 생각 중입니다..."):
             response = get_ai_response(status, subject, prompt)
         st.chat_message("assistant").markdown(response)
         st.session_state.messages.append({"role": "assistant", "content": response})
