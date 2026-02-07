@@ -5,7 +5,8 @@ import sys
 import io
 import streamlit as st
 import pandas as pd
-from datetime import datetime, timedelta  # <--- timedelta 추가
+# [수정] timedelta 추가
+from datetime import datetime, timedelta
 import google.generativeai as genai
 
 # 맥북 한글 깨짐 방지
@@ -21,45 +22,36 @@ if sys.stderr.encoding != 'utf-8':
 st.set_page_config(layout="wide", page_title="Super AI Agent")
 
 # ---------------------------------------------------------
-# 🔒 3. 로그인 시스템 (페이지 전환 효과 구현)
+# 🔒 3. 로그인 시스템 (한국 시간 적용)
 
-# (1) 로그인 상태를 기억할 변수 만들기
 if 'is_logged_in' not in st.session_state:
     st.session_state['is_logged_in'] = False
 
-# (2) 로그인이 안 되어 있으면 로그인 화면만 보여주고 멈춤
 if not st.session_state['is_logged_in']:
-    # 화면 가운데에 로그인 창 만들기
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        st.header("🔒 Joshua's AI Learning Manager")
-        st.info("암호를 입력하세요")
+        st.header("🔒 접근 제한 구역")
+        st.info("오늘의 날짜(4자리)를 입력하세요. 예: 0208")
         
-        # 비밀번호 입력창
         input_password = st.text_input("비밀번호", type="password")
         
-        # 로그인 버튼
         if st.button("입장하기"):
-
-        # 한국 시간 = 서버 시간(UTC) + 9시간
-kst_now = datetime.now() + timedelta(hours=9)
-today_password = kst_now.strftime("%m%d")  # 0208 생성    
+            # [수정] 한국 시간(KST) = UTC + 9시간
+            kst_now = datetime.now() + timedelta(hours=9)
+            today_password = kst_now.strftime("%m%d")
             
-
             if input_password == today_password:
                 st.success("로그인 성공! 잠시만 기다리세요...")
-                # 로그인 상태를 True로 변경
                 st.session_state['is_logged_in'] = True
-                # [핵심] 화면을 새로고침해서 메인 화면으로 이동!
                 st.rerun()
             else:
-                st.error("비밀번호가 틀렸습니다.")
+                # 틀렸을 때 서버가 생각하는 정답을 몰래 알려줌 (디버깅용, 나중에 삭제 가능)
+                st.error(f"비밀번호가 틀렸습니다. (서버 기준 정답: {today_password})")
     
-    # 로그인이 안 됐으면 여기서 코드 실행을 끝냄 (메인 화면 안 보여줌)
     st.stop()
 
 # =========================================================
-# 여기부터는 로그인이 성공했을 때만 실행되는 메인 화면입니다.
+# 메인 화면 시작
 # =========================================================
 
 # ---------------------------------------------------------
@@ -70,7 +62,6 @@ else:
     st.error("🚨 API 키가 없습니다. secrets.toml 파일이나 Streamlit 설정을 확인하세요.")
     st.stop()
 
-# 구글 API 연결
 genai.configure(api_key=api_key)
 
 # ---------------------------------------------------------
@@ -132,9 +123,10 @@ def ask_gemini(user_text):
 if 'chat_history' not in st.session_state: st.session_state.chat_history = []
 if 'focus_score' not in st.session_state: st.session_state.focus_score = 50
 
-# 사이드바에 로그아웃 버튼 추가
 with st.sidebar:
-    st.write(f"접속일: {datetime.now().strftime('%Y-%m-%d')}")
+    # 날짜 표시도 한국 시간으로
+    kst_now = datetime.now() + timedelta(hours=9)
+    st.write(f"접속일: {kst_now.strftime('%Y-%m-%d')}")
     if st.button("로그아웃"):
         st.session_state['is_logged_in'] = False
         st.rerun()
