@@ -21,18 +21,43 @@ if sys.stderr.encoding != 'utf-8':
 st.set_page_config(layout="wide", page_title="Super AI Agent")
 
 # ---------------------------------------------------------
-# 🔒 3. 비밀번호 기능 (로그인)
-with st.sidebar:
-    st.header("🔒 로그인")
-    password = st.text_input("비밀번호를 입력하세요", type="password")
+# 🔒 3. 로그인 시스템 (페이지 전환 효과 구현)
 
-# 오늘 날짜를 "260208" 같은 문자로 만듭니다 (%y:년도2자리, %m:월, %d:일)
-today_password = datetime.now().strftime("%y%m%d")
+# (1) 로그인 상태를 기억할 변수 만들기
+if 'is_logged_in' not in st.session_state:
+    st.session_state['is_logged_in'] = False
 
-if password != today_password:
+# (2) 로그인이 안 되어 있으면 로그인 화면만 보여주고 멈춤
+if not st.session_state['is_logged_in']:
+    # 화면 가운데에 로그인 창 만들기
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.header("🔒 접근 제한 구역")
+        st.info("오늘의 날짜(6자리)를 입력하세요. 예: 260208")
+        
+        # 비밀번호 입력창
+        input_password = st.text_input("비밀번호", type="password")
+        
+        # 로그인 버튼
+        if st.button("입장하기"):
+            # 오늘 날짜 비밀번호 생성 (YYMMDD)
+            today_password = datetime.now().strftime("%y%m%d")
+            
+            if input_password == today_password:
+                st.success("로그인 성공! 잠시만 기다리세요...")
+                # 로그인 상태를 True로 변경
+                st.session_state['is_logged_in'] = True
+                # [핵심] 화면을 새로고침해서 메인 화면으로 이동!
+                st.rerun()
+            else:
+                st.error("비밀번호가 틀렸습니다.")
+    
+    # 로그인이 안 됐으면 여기서 코드 실행을 끝냄 (메인 화면 안 보여줌)
+    st.stop()
 
-    st.info("비밀번호를 입력해야 AI 선생님을 만날 수 있습니다.")
-    st.stop()  # 여기서 코드 실행 중단
+# =========================================================
+# 여기부터는 로그인이 성공했을 때만 실행되는 메인 화면입니다.
+# =========================================================
 
 # ---------------------------------------------------------
 # 4. API 키 설정
@@ -68,13 +93,12 @@ def get_gemini_model():
 model, model_name = get_gemini_model()
 
 # ---------------------------------------------------------
-# 6. 채팅 및 UI 구성 (끊겼던 부분 이어짐)
+# 6. 채팅 및 UI 구성
 
 def ask_gemini(user_text):
     if not model: return "모델 연결 실패", "🔴 에러", "시스템", datetime.now().strftime("%H:%M:%S")
     
     current_time = datetime.now().strftime("%H:%M:%S")
-    # 여기가 끊겼던 부분입니다. 따옴표를 닫아줍니다.
     system_instruction = """
     [System Instruction]
     너는 '초중고 학습 집중 도우미 AI'야.
@@ -105,7 +129,14 @@ def ask_gemini(user_text):
 if 'chat_history' not in st.session_state: st.session_state.chat_history = []
 if 'focus_score' not in st.session_state: st.session_state.focus_score = 50
 
-st.title(f"🏫 Super AI Agent (보안 모드)")
+# 사이드바에 로그아웃 버튼 추가
+with st.sidebar:
+    st.write(f"접속일: {datetime.now().strftime('%Y-%m-%d')}")
+    if st.button("로그아웃"):
+        st.session_state['is_logged_in'] = False
+        st.rerun()
+
+st.title(f"🏫 Super AI Agent")
 if model_name:
     st.caption(f"연결된 모델: {model_name}")
 
