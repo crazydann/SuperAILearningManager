@@ -51,7 +51,43 @@ else:
     st.stop()
 
 # 모델 로드
-model = genai.GenerativeModel('gemini-1.5-flash')
+# [수정된 코드 시작] ----------------------------------------------------
+
+# 1. 안전하게 사용 가능한 모델 찾기 함수 (이전 MVP 로직 복원)
+@st.cache_resource
+def load_gemini_model():
+    """
+    내 API 키로 사용할 수 있는 모델 중 'flash' -> 'gemini-pro' 순서로 찾아서 반환
+    """
+    try:
+        available_models = []
+        # 현재 사용 가능한 모델 리스트업
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                available_models.append(m.name)
+        
+        # 1순위: Flash 모델 찾기 (빠르고 무료 티어에 적합)
+        target_model_name = next((m for m in available_models if 'flash' in m), None)
+        
+        # 2순위: Flash가 없으면 일반 Pro 모델 찾기
+        if not target_model_name:
+            target_model_name = next((m for m in available_models if 'gemini' in m), None)
+            
+        if not target_model_name:
+            st.error("사용 가능한 Gemini 모델을 찾을 수 없습니다.")
+            return None
+
+        # 모델 연결
+        return genai.GenerativeModel(target_model_name)
+
+    except Exception as e:
+        st.error(f"모델 목록을 가져오는 중 에러 발생: {e}")
+        return None
+
+# 2. 모델 로드 실행
+model = load_gemini_model()
+
+# [수정된 코드 끝] ------------------------------------------------------
 
 # ---------------------------------------------------------
 # 2. AI 응답 생성 로직 (모드에 따른 페르소나 변경)
