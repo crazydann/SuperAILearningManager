@@ -1,5 +1,5 @@
 streamlit
-google-generativeai
+groq
 pandas
 gspread
 oauth2client
