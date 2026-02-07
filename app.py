@@ -41,7 +41,7 @@ if not st.session_state['is_logged_in']:
         # 로그인 버튼
         if st.button("입장하기"):
             # 오늘 날짜 비밀번호 생성 (YYMMDD)
-            today_password = datetime.now().strftime("%y%m%d")
+            today_password = datetime.now().strftime("%m%d")
             
             if input_password == today_password:
                 st.success("로그인 성공! 잠시만 기다리세요...")
