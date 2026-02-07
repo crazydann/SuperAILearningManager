@@ -128,7 +128,7 @@ else:
 col1, col2 = st.columns([1, 1])
 
 with col1:
-    st.header("🧑‍🎓 학생 화면")
+    st.header("🧑‍🎓 재영이화면")
     for chat in st.session_state.chat_history:
         with st.chat_message("user"): st.write(chat['user'])
         with st.chat_message("assistant"): st.write(chat['ai'])
