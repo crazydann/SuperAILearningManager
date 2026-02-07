@@ -31,9 +31,7 @@ if password != "1234":  # 원하는 비밀번호로 변경 가능
     st.stop()  # 여기서 코드 실행 중단
 
 # ---------------------------------------------------------
-# 4. API 키 설정 (에러 원인 해결한 버전)
-# try-except를 없애고 단순하게 바꿨습니다.
-
+# 4. API 키 설정
 if "GOOGLE_API_KEY" in st.secrets:
     api_key = st.secrets["GOOGLE_API_KEY"]
 else:
@@ -66,7 +64,7 @@ def get_gemini_model():
 model, model_name = get_gemini_model()
 
 # ---------------------------------------------------------
-# 6. 채팅 및 UI 구성
+# 6. 채팅 및 UI 구성 (에러 났던 부분 수정 완료)
 
 def ask_gemini(user_text):
     if not model: return "모델 연결 실패", "🔴 에러", "시스템", datetime.now().strftime("%H:%M:%S")
@@ -74,14 +72,4 @@ def ask_gemini(user_text):
     current_time = datetime.now().strftime("%H:%M:%S")
     system_instruction = """
     [System Instruction]
-    너는 '초중고 학습 집중 도우미 AI'야.
-    1. 공부 질문 -> 소크라테스식 질문 [STATUS:🟢 학습 몰입 중] [CATEGORY:학습 질문]
-    2. 딴짓 -> 단호하게 거절 [STATUS:🔴 집중 이탈 경고] [CATEGORY:딴짓/이탈]
-    3. 인사 -> 공부 유도 [STATUS:🟡 일반 대화] [CATEGORY:일반]
-    답변 끝에 [STATUS:...] [CATEGORY:...] 태그를 꼭 붙여줘.
-    [User Question]
-    """
-    try:
-        response = model.generate_content(system_instruction + user_text)
-        full_reply = response.text
-        if "[STATUS:" in full_reply:
+    너는 '초중고 학습 집중 도우미 AI
