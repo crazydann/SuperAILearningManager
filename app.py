@@ -30,8 +30,8 @@ if 'is_logged_in' not in st.session_state:
 if not st.session_state['is_logged_in']:
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        st.header("🔒 접근 제한 구역")
-        st.info("오늘의 날짜(4자리)를 입력하세요. 예: 0208")
+        st.header("🔒 Joshua's AI Learning Manager")
+        st.info("암호를 입력하세요")
         
         input_password = st.text_input("비밀번호", type="password")
         
