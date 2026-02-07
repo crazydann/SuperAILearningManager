@@ -91,16 +91,30 @@ def get_logs(user_id=None):
 # ---------------------------------------------------------
 # 2. 모델 연결 (이전과 동일)
 # ---------------------------------------------------------
+#@st.cache_resource
+#def load_gemini_model():
+#    try:
+#        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+#        model_name = next((m for m in available_models if 'flash' in m), 
+#                          next((m for m in available_models if 'gemini' in m), None))
+#        return genai.GenerativeModel(model_name) if model_name else None
+#    except: return None
+#
+#model = load_gemini_model()
+
+# [수정 전 코드] (자동으로 찾느라 이상한 모델을 잡음)
+# def load_gemini_model():
+#     try:
+#         available_models = []
+#         ... (복잡한 로직) ...
+
+# ---------------------------------------------------------
+
+# [수정 후 코드] (안정적인 1.5 Flash 모델로 고정)
 @st.cache_resource
 def load_gemini_model():
-    try:
-        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        model_name = next((m for m in available_models if 'flash' in m), 
-                          next((m for m in available_models if 'gemini' in m), None))
-        return genai.GenerativeModel(model_name) if model_name else None
-    except: return None
-
-model = load_gemini_model()
+    # 복잡하게 찾지 말고, 가장 안정적이고 무료 용량이 큰 모델을 콕 집어서 연결
+    return genai.GenerativeModel('gemini-1.5-flash')
 
 def get_ai_response(status, subject, question):
     if not model: return "AI 모델 연결 실패"
