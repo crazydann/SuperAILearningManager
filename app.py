@@ -1,3 +1,17 @@
+import streamlit as st
+import google.generativeai as genai
+
+# [마법의 코드]
+# 1. 로컬에서 실행할 땐? -> .streamlit/secrets.toml 파일을 찾아서 읽음 (성공!)
+# 2. 클라우드에서 실행할 땐? -> 웹사이트에 입력한 Secrets를 찾아서 읽음 (성공!)
+try:
+    api_key = st.secrets["GOOGLE_API_KEY"]
+except FileNotFoundError:
+    st.error("비밀번호 파일(secrets.toml)을 찾을 수 없습니다.")
+    st.stop()
+
+genai.configure(api_key=api_key)
+# ... 이후 코드는 그대로 ...
 # ---------------------------------------------------------
 # [필수] 맥북 한글 에러 방지 (맨 위에 유지)
 import os
