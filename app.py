@@ -26,7 +26,11 @@ with st.sidebar:
     st.header("🔒 로그인")
     password = st.text_input("비밀번호를 입력하세요", type="password")
 
-if password != "1234":  # 원하는 비밀번호로 변경 가능
+# 오늘 날짜를 "260208" 같은 문자로 만듭니다 (%y:년도2자리, %m:월, %d:일)
+today_password = datetime.now().strftime("%y%m%d")
+
+if password != today_password:
+
     st.info("비밀번호를 입력해야 AI 선생님을 만날 수 있습니다.")
     st.stop()  # 여기서 코드 실행 중단
 
