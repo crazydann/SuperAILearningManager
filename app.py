@@ -8,7 +8,7 @@ import os
 import time
 
 # ---------------------------------------------------------
-# 1. 초기 설정 및 Google Sheets 연결
+# 1. 초기 설정 및 기본 구성
 # ---------------------------------------------------------
 st.set_page_config(layout="wide", page_title="Joshua's AI Learning Manager")
 
@@ -24,7 +24,9 @@ else:
     st.error("🚨 API Key가 설정되지 않았습니다. .streamlit/secrets.toml 파일을 확인해주세요.")
     st.stop()
 
-# [Google Sheets 연결]
+# ---------------------------------------------------------
+# 2. Google Sheets 데이터베이스 연결
+# ---------------------------------------------------------
 @st.cache_resource
 def init_connection():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -35,15 +37,13 @@ def init_connection():
 def get_db_sheet():
     client = init_connection()
     try:
-        # 시트 이름으로 열기 (에러나면 공유 여부 확인)
+        # 시트 이름으로 열기
         return client.open("Joshua_AI_DB")
     except gspread.SpreadsheetNotFound:
         st.error("❌ 'Joshua_AI_DB' 시트를 찾을 수 없습니다. 서비스 계정을 시트에 초대했는지 확인하세요.")
         st.stop()
 
-# ---------------------------------------------------------
-# 2. 데이터베이스(DB) 함수 모음
-# ---------------------------------------------------------
+# DB 헬퍼 함수들
 def get_user_info(user_id):
     """Users 시트에서 유저 정보 조회"""
     sh = get_db_sheet()
@@ -99,49 +99,52 @@ def get_logs(user_id=None):
     return df
 
 # ---------------------------------------------------------
-# 3. AI 모델 연결 (Robust Version)
+# 3. AI 모델 연결 (여기가 수정된 핵심 부분!)
 # ---------------------------------------------------------
 @st.cache_resource
 def load_gemini_model():
     """
-    가장 안정적이고 무료 쿼터가 많은 'Flash' 모델을 자동으로 찾습니다.
-    404 에러와 429(수량 제한) 에러를 모두 방지합니다.
+    무료 사용량이 넉넉한 1.5 Flash 모델만 강제로 찾아서 연결합니다.
+    (하루 20회 제한인 2.5 버전이나 실험용 버전은 절대 연결하지 않음)
     """
     try:
         # 1. 내 키로 접근 가능한 모든 모델 리스트업
         all_models = [m.name for m in genai.list_models()]
         
-        # 2. 우선순위: 1.5 Flash (안정적) -> 1.0 Pro (구관이 명관)
-        # *주의: 'latest'나 '2.5' 같은 실험적 모델은 제한이 심해 제외함
-        priority_targets = [
-            "models/gemini-1.5-flash",
-            "models/gemini-1.5-flash-001",
-            "models/gemini-1.5-flash-002",
-            "models/gemini-1.0-pro"
-        ]
+        target_model_name = None
         
-        selected_model = None
-        for target in priority_targets:
-            if target in all_models:
-                selected_model = target
-                break
-        
-        # 3. 정 없으면 아무 'flash' 모델이나 잡음
-        if not selected_model:
-            selected_model = next((m for m in all_models if 'flash' in m), None)
+        # 2. 필터링 로직: 'flash'와 '1.5'가 들어간 모델만 찾음
+        # 예: models/gemini-1.5-flash-001, models/gemini-1.5-flash
+        candidates = []
+        for m in all_models:
+            # 2.5 버전이나 실험용(experimental)은 무조건 제외 (중요!)
+            if '2.5' in m or 'experimental' in m:
+                continue
             
-        if selected_model:
-            print(f"✅ Connected Model: {selected_model}")
-            return genai.GenerativeModel(selected_model)
+            # 1.5 버전이고 flash인 경우만 후보에 등록
+            if '1.5' in m and 'flash' in m:
+                candidates.append(m)
+        
+        # 3. 후보 중 가장 짧은 이름(표준 이름)을 선호
+        if candidates:
+            target_model_name = sorted(candidates, key=len)[0]
+            
+        # 4. 만약 1.5 Flash가 없으면 1.0 Pro라도 찾음 (비상용)
+        if not target_model_name:
+             target_model_name = next((m for m in all_models if 'gemini-1.0-pro' in m), None)
+
+        if target_model_name:
+            # 최종 연결
+            return genai.GenerativeModel(target_model_name)
         else:
-            st.error("사용 가능한 모델을 찾지 못했습니다.")
+            st.error("사용 가능한 1.5 Flash 모델을 찾을 수 없습니다. API 키 권한을 확인해주세요.")
             return None
             
     except Exception as e:
         st.error(f"모델 연결 실패: {e}")
         return None
 
-# 모델 로드
+# 모델 로드 실행
 model = load_gemini_model()
 
 def get_ai_response(status, subject, question):
@@ -186,7 +189,7 @@ def login_page():
         **[테스트 계정 정보]**
         - 학생: `joshua`, `david`
         - 부모: `myna5004`
-        - 비번: `1234` (또는 오늘날짜)
+        - 비번: 오늘날짜
         """)
         
         user_id = st.text_input("아이디")
