@@ -1,172 +1,280 @@
-# ---------------------------------------------------------
-# 1. 필수 설정 및 도구 가져오기
-import os
-import sys
-import io
 import streamlit as st
-import pandas as pd
-# [수정] timedelta 추가
-from datetime import datetime, timedelta
 import google.generativeai as genai
-
-# 맥북 한글 깨짐 방지
-os.environ["PYTHONIOENCODING"] = "utf-8"
-os.environ["LANG"] = "en_US.UTF-8"
-if sys.stdout.encoding != 'utf-8':
-    sys.stdout = io.TextIOWrapper(sys.stdout.detach(), encoding='utf-8')
-if sys.stderr.encoding != 'utf-8':
-    sys.stderr = io.TextIOWrapper(sys.stderr.detach(), encoding='utf-8')
+import datetime
+import pandas as pd
+import os
 
 # ---------------------------------------------------------
-# 2. 페이지 설정 (가장 먼저!)
+# 1. 초기 설정 및 Global State (데이터베이스 대용)
+# ---------------------------------------------------------
 st.set_page_config(layout="wide", page_title="Super AI Agent")
 
+# CSS 로드
+def local_css(file_name):
+    with open(file_name) as f:
+        st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
+
+if os.path.exists("style.css"):
+    local_css("style.css")
+
+# [핵심] 브라우저 탭 간 데이터 공유를 위한 캐시형 DB
+# 실제 서비스에서는 SQL DB를 사용하지만, MVP에서는 이 방식이 가장 효율적입니다.
+@st.cache_resource
+def get_database():
+    return {
+        "joshua": {
+            "role": "student",
+            "name": "Joshua",
+            "status": "studying", # studying or break
+            # 과목별 대화 기록 저장소
+            "history": {"국어": [], "영어": [], "수학": [], "과학": [], "기타": []}
+        },
+        "david": {
+            "role": "student",
+            "name": "David",
+            "status": "break",
+            "history": {"국어": [], "영어": [], "수학": [], "과학": [], "기타": []}
+        },
+        "myna5004": {
+            "role": "parent",
+            "name": "부모님"
+        }
+    }
+
+db = get_database()
+
+# API 키 설정 (secrets.toml 또는 환경변수)
+if "GOOGLE_API_KEY" in st.secrets:
+    genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
+else:
+    st.error("API Key가 설정되지 않았습니다.")
+    st.stop()
+
+# 모델 로드
+model = genai.GenerativeModel('gemini-1.5-flash')
+
 # ---------------------------------------------------------
-# 🔒 3. 로그인 시스템 (한국 시간 적용)
+# 2. AI 응답 생성 로직 (모드에 따른 페르소나 변경)
+# ---------------------------------------------------------
+def get_ai_response(user_id, subject, question):
+    user_data = db[user_id]
+    mode = user_data['status']
+    
+    # 시스템 프롬프트 설계
+    if mode == "studying":
+        system_prompt = f"""
+        당신은 엄격하지만 유능한 {subject} 전담 튜터입니다.
+        현재 학생은 '공부 시간' 중입니다.
+        
+        지침:
+        1. 오직 '{subject}' 관련 질문에만 답변하세요.
+        2. 학생이 게임, 연예인, 잡담 등 공부와 무관한 이야기를 하면 "지금은 공부 시간입니다. 학습에 집중하세요."라고 단호하게 거절하세요.
+        3. 정답을 바로 알려주기보다, 생각하는 과정을 유도하세요.
+        """
+    else: # break
+        system_prompt = f"""
+        당신은 학생의 친절한 친구이자 멘토입니다.
+        현재 학생은 '쉬는 시간' 중입니다.
+        
+        지침:
+        1. 어떤 주제(게임, 고민, 취미)든 자유롭고 재미있게 대화하세요.
+        2. 학생의 스트레스를 풀어주세요.
+        3. 너무 길지 않게 친구처럼 대답하세요.
+        """
+    
+    try:
+        full_prompt = f"{system_prompt}\n\n[학생 질문]: {question}"
+        response = model.generate_content(full_prompt)
+        return response.text
+    except Exception as e:
+        return f"AI 연결 오류: {e}"
 
-if 'is_logged_in' not in st.session_state:
-    st.session_state['is_logged_in'] = False
-
-if not st.session_state['is_logged_in']:
-    col1, col2, col3 = st.columns([1, 2, 1])
+# ---------------------------------------------------------
+# 3. 화면 UI: 로그인 페이지
+# ---------------------------------------------------------
+def login_page():
+    st.markdown("<h1 style='text-align: center;'>🏫 Super AI Agent</h1>", unsafe_allow_html=True)
+    
+    col1, col2, col3 = st.columns([1,2,1])
     with col2:
-        st.header("🔒 Joshua's AI Learning Manager")
-        st.info("암호를 입력하세요")
+        st.info("오늘의 날짜(4자리, 예: 0208)가 비밀번호입니다.")
+        user_id = st.text_input("아이디 (joshua / david / myna5004)")
+        password = st.text_input("비밀번호", type="password")
         
-        input_password = st.text_input("비밀번호", type="password")
-        
-        if st.button("입장하기"):
-            # [수정] 한국 시간(KST) = UTC + 9시간
-            kst_now = datetime.now() + timedelta(hours=9)
-            today_password = kst_now.strftime("%m%d")
+        if st.button("로그인", use_container_width=True):
+            # 비밀번호 로직: 현재 날짜(MMDD)
+            today_pw = (datetime.datetime.now() + datetime.timedelta(hours=9)).strftime("%m%d")
             
-            if input_password == today_password:
-                st.success("로그인 성공! 잠시만 기다리세요...")
-                st.session_state['is_logged_in'] = True
+            if user_id in db and password == today_pw:
+                st.session_state['user_id'] = user_id
+                st.session_state['role'] = db[user_id]['role']
+                st.session_state['logged_in'] = True
+                st.rerun()
+            elif user_id in db and password == "1234": # 테스트용 백도어
+                st.session_state['user_id'] = user_id
+                st.session_state['role'] = db[user_id]['role']
+                st.session_state['logged_in'] = True
                 st.rerun()
             else:
-                # 틀렸을 때 서버가 생각하는 정답을 몰래 알려줌 (디버깅용, 나중에 삭제 가능)
-                st.error(f"비밀번호가 틀렸습니다. (서버 기준 정답: {today_password})")
+                st.error(f"로그인 실패. (오늘의 비번: {today_pw})")
+
+# ---------------------------------------------------------
+# 4. 화면 UI: 학생 페이지
+# ---------------------------------------------------------
+def student_page():
+    user_id = st.session_state['user_id']
+    user_data = db[user_id]
     
-    st.stop()
-
-# =========================================================
-# 메인 화면 시작
-# =========================================================
-
-# ---------------------------------------------------------
-# 4. API 키 설정
-if "GOOGLE_API_KEY" in st.secrets:
-    api_key = st.secrets["GOOGLE_API_KEY"]
-else:
-    st.error("🚨 API 키가 없습니다. secrets.toml 파일이나 Streamlit 설정을 확인하세요.")
-    st.stop()
-
-genai.configure(api_key=api_key)
-
-# ---------------------------------------------------------
-# 5. 모델 자동 탐지 및 연결
-@st.cache_resource
-def get_gemini_model():
-    try:
-        available_models = []
-        for m in genai.list_models():
-            if 'generateContent' in m.supported_generation_methods:
-                available_models.append(m.name)
+    # [사이드바] 과목 선택 및 학습 기록
+    with st.sidebar:
+        st.header(f"🧑‍🎓 {user_data['name']}")
         
-        target_model = next((m for m in available_models if 'flash' in m), None)
-        if not target_model:
-            target_model = next((m for m in available_models if 'gemini' in m), None)
-            
-        if not target_model: return None, "모델 없음"
+        st.markdown("### 📚 과목 선택")
+        subject = st.radio("공부할 과목을 선택하세요", ["국어", "영어", "수학", "과학", "기타"])
         
-        return genai.GenerativeModel(target_model), target_model
-    except Exception as e:
-        return None, str(e)
+        st.markdown("---")
+        st.markdown(f"### 🕒 최근 {subject} 기록")
+        # 최근 5개 기록 역순 표시
+        recent_logs = user_data['history'][subject][-5:]
+        for log in reversed(recent_logs):
+            with st.expander(f"{log['time']} - Q"):
+                st.write(f"Q: {log['q']}")
+                st.caption(f"A: {log['a']}")
 
-model, model_name = get_gemini_model()
-
-# ---------------------------------------------------------
-# 6. 채팅 및 UI 구성
-
-def ask_gemini(user_text):
-    if not model: return "모델 연결 실패", "🔴 에러", "시스템", datetime.now().strftime("%H:%M:%S")
-    
-    current_time = datetime.now().strftime("%H:%M:%S")
-    system_instruction = """
-    [System Instruction]
-    너는 '초중고 학습 집중 도우미 AI'야.
-    1. 공부 질문 -> 질문에 대하여 설명을 해주면서, 헷갈릴 수 있는 부분은 잘 이해했는지 다시 물어라 [STATUS:🟢 학습 몰입 중] [CATEGORY:학습 질문]
-    2. 딴짓 -> 단호하게 거절 [STATUS:🔴 집중 이탈 경고] [CATEGORY:딴짓/이탈]
-    3. 인사 -> 공부 유도 [STATUS:🟡 일반 대화] [CATEGORY:일반]
-    답변 끝에 [STATUS:...] [CATEGORY:...] 태그를 꼭 붙여줘.
-    [User Question]
-    """
-    try:
-        response = model.generate_content(system_instruction + user_text)
-        full_reply = response.text
-        
-        if "[STATUS:" in full_reply:
-            parts = full_reply.split("[STATUS:")
-            ai_reply = parts[0].strip()
-            tags = parts[1]
-            status = tags.split("]")[0].strip()
-            category = tags.split("[CATEGORY:")[1].split("]")[0].strip() if "[CATEGORY:" in tags else "기타"
+    # [메인] 상단 상태바 및 채팅
+    col1, col2 = st.columns([8, 2])
+    with col1:
+        st.title(f"{subject} AI 튜터")
+    with col2:
+        # 상태 표시 배지
+        if user_data['status'] == 'studying':
+            st.markdown('<div class="status-badge status-study">🔥 공부 시간</div>', unsafe_allow_html=True)
         else:
-            ai_reply, status, category = full_reply, "🟡 일반 대화", "일반"
-            
-        return ai_reply, status, category, current_time
+            st.markdown('<div class="status-badge status-break">🍀 쉬는 시간</div>', unsafe_allow_html=True)
+
+    # 채팅 인터페이스
+    # (Streamlit은 리런 시 화면이 초기화되므로, 현재 세션의 대화 내용만 보여줍니다)
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+
+    if prompt := st.chat_input("질문을 입력하세요..."):
+        # 유저 메시지 표시
+        st.chat_message("user").markdown(prompt)
+        st.session_state.messages.append({"role": "user", "content": prompt})
         
-    except Exception as e:
-        return f"에러: {e}", "🔴 에러", "시스템", current_time
-
-if 'chat_history' not in st.session_state: st.session_state.chat_history = []
-if 'focus_score' not in st.session_state: st.session_state.focus_score = 50
-
-with st.sidebar:
-    # 날짜 표시도 한국 시간으로
-    kst_now = datetime.now() + timedelta(hours=9)
-    st.write(f"접속일: {kst_now.strftime('%Y-%m-%d')}")
-    if st.button("로그아웃"):
-        st.session_state['is_logged_in'] = False
-        st.rerun()
-
-st.title(f"🏫 Joshua's AI Learning Manager")
-if model_name:
-    st.caption(f"연결된 모델: {model_name}")
-
-col1, col2 = st.columns([1, 1])
-
-with col1:
-    st.header("🧑‍🎓 학생 화면")
-    for chat in st.session_state.chat_history:
-        with st.chat_message("user"): st.write(chat['user'])
-        with st.chat_message("assistant"): st.write(chat['ai'])
-
-    if user_input := st.chat_input("질문하세요..."):
-        with st.chat_message("user"): st.write(user_input)
-        with st.chat_message("assistant"):
-            with st.spinner("생각 중..."):
-                reply, status, category, time_stamp = ask_gemini(user_input)
-                st.write(reply)
+        # AI 응답 생성
+        with st.spinner("AI가 생각 중입니다..."):
+            ai_reply = get_ai_response(user_id, subject, prompt)
         
-        score_chg = 5 if "학습" in status else (-10 if "이탈" in status else 0)
-        st.session_state.focus_score = max(0, min(100, st.session_state.focus_score + score_chg))
-        st.session_state.chat_history.append({'time': time_stamp, 'user': user_input, 'ai': reply, 'status': status, 'category': category})
-        st.rerun()
+        # AI 메시지 표시
+        st.chat_message("assistant").markdown(ai_reply)
+        st.session_state.messages.append({"role": "assistant", "content": ai_reply})
+        
+        # DB에 영구 저장 (학부모 확인용)
+        timestamp = (datetime.datetime.now() + datetime.timedelta(hours=9)).strftime("%H:%M")
+        db[user_id]['history'][subject].append({"time": timestamp, "q": prompt, "a": ai_reply})
 
-with col2:
-    st.header("👀 학부모 상황실")
-    score = st.session_state.focus_score
-    st.metric("현재 집중도", f"{score}점")
-    st.progress(score / 100)
+# ---------------------------------------------------------
+# 5. 화면 UI: 학부모 페이지
+# ---------------------------------------------------------
+def parent_page():
+    st.title("👨‍👩‍👧‍👦 학부모 통합 관리")
     
-    if st.session_state.chat_history:
-        log = st.session_state.chat_history[-1]
-        if "이탈" in log['status']: st.error(f"상태: {log['status']}")
-        elif "학습" in log['status']: st.success(f"상태: {log['status']}")
-        else: st.info(f"상태: {log['status']}")
+    # [사이드바] 자녀 선택 및 요약
+    with st.sidebar:
+        st.header("자녀 선택")
+        # 학생 역할인 유저만 필터링
+        student_list = [uid for uid, info in db.items() if info['role'] == 'student']
+        target_child = st.selectbox("관리할 자녀를 선택하세요", student_list)
         
-        st.write(f"**최근 활동:** {log['user']}")
-        st.divider()
-        st.dataframe(pd.DataFrame(st.session_state.chat_history)[['time', 'category', 'status', 'user']], use_container_width=True)
+        child_data = db[target_child]
+        
+        st.markdown("---")
+        st.markdown(f"### {child_data['name']}의 최근 학습")
+        # 모든 과목의 기록을 합쳐서 최신순 정렬
+        all_logs = []
+        for subj, logs in child_data['history'].items():
+            for log in logs:
+                log['subject'] = subj
+                all_logs.append(log)
+        
+        if all_logs:
+            last_log = all_logs[-1]
+            st.info(f"마지막 질문 ({last_log['time']}):\n{last_log['q']}")
+        else:
+            st.caption("아직 학습 기록이 없습니다.")
+
+    # [메인] 자녀 상태 제어 및 상세 히스토리
+    child_data = db[target_child]
+    
+    # 1. 상태 제어 패널
+    st.subheader(f"⚙️ {child_data['name']} 상태 설정")
+    
+    col1, col2, col3 = st.columns([2, 2, 6])
+    
+    current_status = child_data['status']
+    
+    with col1:
+        st.markdown(f"현재 상태: **{'🔥 공부 중' if current_status == 'studying' else '🍀 쉬는 중'}**")
+    
+    with col2:
+        # 버튼을 누르면 DB 상태가 즉시 변경됨 -> 학생 화면에 반영
+        if current_status == 'studying':
+            if st.button("쉬는 시간으로 변경"):
+                db[target_child]['status'] = 'break'
+                st.rerun()
+        else:
+            if st.button("공부 시간으로 변경", type="primary"):
+                db[target_child]['status'] = 'studying'
+                st.rerun()
+
+    st.markdown("---")
+    
+    # 2. 상세 히스토리 (최근 5개 + 스크롤)
+    st.subheader("📝 상세 학습 내역")
+    
+    # 모든 기록을 시간 역순 정렬 (단순화를 위해 리스트 순서대로 뒤집음)
+    # 실제로는 datetime 객체로 변환해서 정렬해야 정확함
+    sorted_logs = sorted(all_logs, key=lambda x: x['time'], reverse=True)
+    
+    # 최근 5개만 카드 형태로 보여주고, 나머지는 데이터프레임으로
+    top_logs = sorted_logs[:5]
+    
+    for log in top_logs:
+        with st.container():
+            st.markdown(f"**[{log['subject']}]** {log['time']}")
+            st.text(f"Q: {log['q']}")
+            st.caption(f"A: {log['a']}")
+            st.divider()
+            
+    if len(sorted_logs) > 5:
+        with st.expander("이전 기록 더보기"):
+            df = pd.DataFrame(sorted_logs[5:])
+            st.dataframe(df)
+
+# ---------------------------------------------------------
+# 6. 메인 실행 라우터
+# ---------------------------------------------------------
+if "logged_in" not in st.session_state:
+    st.session_state['logged_in'] = False
+
+if not st.session_state['logged_in']:
+    login_page()
+else:
+    # 로그아웃 버튼 (사이드바 하단)
+    with st.sidebar:
+        st.markdown("---")
+        if st.button("로그아웃"):
+            st.session_state['logged_in'] = False
+            st.session_state.messages = [] # 대화 내용 초기화
+            st.rerun()
+
+    # 역할에 따른 페이지 라우팅
+    if st.session_state['role'] == 'student':
+        student_page()
+    elif st.session_state['role'] == 'parent':
+        parent_page()

@@ -1,0 +1,47 @@
+/* 전체 폰트 및 기본 스타일 */
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;500;700&display=swap');
+
+html, body, [class*="css"] {
+    font-family: 'Noto Sans KR', sans-serif;
+}
+
+/* 모바일 앱 느낌의 헤더 */
+header[data-testid="stHeader"] {
+    background-color: #f0f2f6;
+    height: 3rem;
+}
+
+/* 사이드바 스타일 */
+section[data-testid="stSidebar"] {
+    background-color: #ffffff;
+    border-right: 1px solid #e0e0e0;
+}
+
+/* 학생용: 상태 표시 배지 */
+.status-badge {
+    padding: 5px 10px;
+    border-radius: 15px;
+    color: white;
+    font-weight: bold;
+    font-size: 0.9em;
+    display: inline-block;
+    margin-bottom: 10px;
+}
+
+.status-study {
+    background-color: #ff4b4b; /* 공부모드: 빨강 */
+    border: 2px solid #ff4b4b;
+}
+
+.status-break {
+    background-color: #00cc66; /* 휴식모드: 초록 */
+    border: 2px solid #00cc66;
+}
+
+/* 채팅창 스타일 */
+.stChatMessage {
+    background-color: #f9f9f9;
+    border-radius: 10px;
+    padding: 10px;
+    margin-bottom: 5px;
+}
