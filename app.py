@@ -64,15 +64,28 @@ def add_log(user_id, subject, question, answer):
     timestamp = (datetime.datetime.now() + datetime.timedelta(hours=9)).strftime("%Y-%m-%d %H:%M:%S")
     ws.append_row([timestamp, user_id, subject, question, answer])
 
+# [수정된 get_logs 함수]
 def get_logs(user_id=None):
-    """Logs 시트에서 기록 가져오기"""
+    """Logs 시트에서 기록 가져오기 (데이터가 없을 때 에러 방지 포함)"""
     sh = get_db_sheet()
     ws = sh.worksheet("Logs")
     records = ws.get_all_records()
-    df = pd.DataFrame(records)
     
+    # [핵심 수정] 기록이 하나도 없으면 빈 데이터프레임에 컬럼명만 강제로 지정
+    if not records:
+        df = pd.DataFrame(columns=['time', 'user_id', 'subject', 'question', 'answer'])
+    else:
+        df = pd.DataFrame(records)
+    
+    # 만약 데이터는 있는데 'user_id' 컬럼이 없는 경우(헤더 오타 등) 방어 로직
+    if 'user_id' not in df.columns:
+        # 헤더가 잘못되었을 가능성이 높으므로 일단 빈 DF 반환하거나 에러 방지
+        return pd.DataFrame(columns=['time', 'user_id', 'subject', 'question', 'answer'])
+
     if user_id:
-        return df[df['user_id'] == user_id]
+        # 숫자/문자 형식이 다를 수 있어 문자열로 변환 후 비교
+        return df[df['user_id'].astype(str) == str(user_id)]
+        
     return df
 
 # ---------------------------------------------------------
