@@ -96,7 +96,7 @@ def ask_gemini(user_text):
     system_instruction = """
     [System Instruction]
     너는 '초중고 학습 집중 도우미 AI'야.
-    1. 공부 질문 -> 소크라테스식 질문 [STATUS:🟢 학습 몰입 중] [CATEGORY:학습 질문]
+    1. 공부 질문 -> 질문에 대하여 설명을 해주면서, 헷갈릴 수 있는 부분은 잘 이해했는지 다시 물어라 [STATUS:🟢 학습 몰입 중] [CATEGORY:학습 질문]
     2. 딴짓 -> 단호하게 거절 [STATUS:🔴 집중 이탈 경고] [CATEGORY:딴짓/이탈]
     3. 인사 -> 공부 유도 [STATUS:🟡 일반 대화] [CATEGORY:일반]
     답변 끝에 [STATUS:...] [CATEGORY:...] 태그를 꼭 붙여줘.
@@ -131,7 +131,7 @@ with st.sidebar:
         st.session_state['is_logged_in'] = False
         st.rerun()
 
-st.title(f"🏫 Super AI Agent")
+st.title(f"🏫 Joshua's AI Learning Manager")
 if model_name:
     st.caption(f"연결된 모델: {model_name}")
 
