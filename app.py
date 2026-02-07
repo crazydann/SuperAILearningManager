@@ -5,7 +5,7 @@ import sys
 import io
 import streamlit as st
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta  # <--- timedelta 추가
 import google.generativeai as genai
 
 # 맥북 한글 깨짐 방지
@@ -40,9 +40,12 @@ if not st.session_state['is_logged_in']:
         
         # 로그인 버튼
         if st.button("입장하기"):
-            # 오늘 날짜 비밀번호 생성 (YYMMDD)
-            today_password = datetime.now().strftime("%m%d")
+
+        # 한국 시간 = 서버 시간(UTC) + 9시간
+kst_now = datetime.now() + timedelta(hours=9)
+today_password = kst_now.strftime("%m%d")  # 0208 생성    
             
+
             if input_password == today_password:
                 st.success("로그인 성공! 잠시만 기다리세요...")
                 # 로그인 상태를 True로 변경
