@@ -37,13 +37,11 @@ def init_clients():
 
 supabase, groq = init_clients()
 
-# --- DB 헬퍼 함수 ---
 def get_user_info(user_id):
     res = supabase.table("users").select("*").eq("user_id", user_id).execute()
     return res.data[0] if res.data else None
 
 def update_user_status(user_id, status_key, new_value):
-    """상태(studying/break) 또는 권한(detail_permission) 업데이트"""
     supabase.table("users").update({status_key: new_value}).eq("user_id", user_id).execute()
 
 def add_log(user_id, subject, question, answer, img_url=None, log_type="Text"):
@@ -58,10 +56,9 @@ def get_logs(user_id):
     return pd.DataFrame(res.data) if res.data else pd.DataFrame()
 
 # ---------------------------------------------------------
-# 3. AI 모델 로직 (과목 자동 분류 및 JSON 채점)
+# 3. AI 모델 로직 (다중 문제 JSON 파싱 적용)
 # ---------------------------------------------------------
 def classify_subject(text):
-    """질문을 보고 자동으로 과목을 파악합니다 [Req 1]"""
     prompt = f"다음 질문이나 내용을 보고 '국어', '영어', '수학', '과학', '기타' 중 딱 하나의 단어로만 대답해:\n\n{text}"
     completion = groq.chat.completions.create(
         model="llama-3.3-70b-versatile",
@@ -83,14 +80,19 @@ def get_text_response(status, subject, question):
     return completion.choices[0].message.content
 
 def analyze_vision_json(b64_encoded_jpeg):
-    """사진 분석 후 정답/오답, 해설, 핵심 개념을 JSON 구조로 반환합니다 [Req 3]"""
+    """여러 문제를 인식할 수 있도록 JSON 배열 형태로 요청합니다."""
     prompt = """
-    이 문제 풀이 사진을 분석해서 반드시 아래 JSON 형식으로만 응답해. 마크다운 없이 순수 JSON만 출력해:
+    이 문제 풀이 사진에는 여러 문제가 포함되어 있을 수 있습니다. 각 문제별로 분석해서 반드시 아래 JSON 형식(배열 포함)으로만 응답해. 마크다운 없이 순수 JSON만 출력해:
     {
-        "is_correct": true/false (정답 여부),
-        "status_text": "정답입니다! / 아쉽지만 오답입니다.",
-        "detailed_explanation": "학생의 풀이에서 틀린 부분에 대한 상세 해설",
-        "core_concept": "이 문제의 핵심 학습 개념"
+        "results": [
+            {
+                "question_number": "문제 번호 (예: 1번, 2번)",
+                "is_correct": true 또는 false,
+                "status_text": "정답입니다! 또는 아쉽지만 오답입니다.",
+                "detailed_explanation": "학생 풀이의 틀린 부분 상세 해설 (정답일 경우 칭찬과 핵심 요약)",
+                "core_concept": "이 문제의 핵심 학습 개념"
+            }
+        ]
     }
     """
     completion = groq.chat.completions.create(
@@ -99,12 +101,11 @@ def analyze_vision_json(b64_encoded_jpeg):
             {"type": "text", "text": prompt},
             {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64_encoded_jpeg}"}}
         ]}],
-        temperature=0.1, max_tokens=1024, response_format={"type": "json_object"}
+        temperature=0.1, max_tokens=2048, response_format={"type": "json_object"}
     )
     return json.loads(completion.choices[0].message.content)
 
 def generate_and_grade_similar(core_concept, count):
-    """유사 문제를 생성하고 즉석에서 채점할 수 있는 텍스트를 제공합니다"""
     prompt = f"핵심 개념 '{core_concept}'에 대한 객관식 또는 단답형 문제 {count}개를 내줘. 문제 아래에 바로 정답도 알려줘."
     completion = groq.chat.completions.create(
         model="llama-3.3-70b-versatile",
@@ -124,45 +125,67 @@ def get_standardized_image(uploaded_file):
     return img
 
 # ---------------------------------------------------------
-# 4. 팝업(Dialog) UI 설계 [Req 3]
+# 4. 팝업(Dialog) UI 설계 (중첩 에러 해결 및 다중 문제 지원)
 # ---------------------------------------------------------
-@st.dialog("📝 AI 유사 문제 풀이")
-def similar_problem_dialog(concept, count, user_id, subject):
-    st.write(f"**{concept}** 개념을 복습하기 위한 {count}개의 문제입니다.")
-    with st.spinner("문제 생성 중..."):
-        problems = generate_and_grade_similar(concept, count)
-        st.info(problems)
-        add_log(user_id, subject, f"유사 문제 {count}개 요청 ({concept})", problems, log_type="Similar_Task")
-
-@st.dialog("🎯 채점 결과")
+@st.dialog("🎯 다중 문제 채점 결과", width="large")
 def grading_dialog(analysis_data, user_id, subject, img_url):
-    st.image(st.session_state.current_img_obj, width=300)
+    st.image(st.session_state.current_img_obj, use_container_width=True)
     
-    # 1. 정답/오답 심플 표기
-    if analysis_data['is_correct']:
-        st.success(f"✅ {analysis_data['status_text']}")
-    else:
-        st.error(f"❌ {analysis_data['status_text']}")
-
-    # 2. 자세히 보기 권한 체크 및 노출
     user_info = get_user_info(user_id)
     has_permission = user_info.get('detail_permission', False)
+    
+    # 생성된 유사 문제를 세션에 임시 저장하여 버튼을 눌러도 사라지지 않게 합니다.
+    if "sim_problems_cache" not in st.session_state:
+        st.session_state.sim_problems_cache = {}
 
-    if has_permission:
-        with st.expander("🔍 풀이 해설 자세히 보기 (권한 활성화 됨)"):
-            st.write(analysis_data['detailed_explanation'])
-    else:
-        st.warning("🔒 해설 자세히 보기 (학부모 권한 필요 - 대시보드에서 허용해주세요)")
+    results = analysis_data.get('results', [])
+    if not results:
+        st.warning("분석할 문제를 찾지 못했습니다. 사진을 다시 확인해주세요.")
+        return
 
-    # 3. 오답일 경우 유사 문제 풀기 트리거
-    if not analysis_data['is_correct']:
-        st.divider()
+    # 사진 속 각각의 문제에 대해 반복 생성
+    for idx, item in enumerate(results):
+        q_num = item.get('question_number', f'{idx+1}번 문제')
+        st.subheader(f"📌 {q_num}")
+        
+        # 1. 정답/오답 표기
+        if item.get('is_correct', False):
+            st.success(f"✅ {item.get('status_text', '정답입니다!')}")
+        else:
+            st.error(f"❌ {item.get('status_text', '오답입니다.')}")
+
+        # 2. 자세히 보기 권한 체크
+        if has_permission:
+            with st.expander("🔍 풀이 해설 자세히 보기 (권한 허용됨)"):
+                st.write(item.get('detailed_explanation', '해설이 없습니다.'))
+        else:
+            st.warning("🔒 해설 자세히 보기 (학부모 대시보드에서 허용 필요)")
+
+        # 3. 정답/오답 상관없이 유사 문제 풀기 기능 제공 (같은 팝업 내에서 작동)
         st.write("💡 이 개념을 완벽하게 익혀볼까요?")
         c1, c2 = st.columns(2)
-        if c1.button("유사 문제 1개 풀기"):
-            similar_problem_dialog(analysis_data['core_concept'], 1, user_id, subject)
-        if c2.button("유사 문제 3개 풀기"):
-            similar_problem_dialog(analysis_data['core_concept'], 3, user_id, subject)
+        btn1_key = f"sim_1_{idx}"
+        btn3_key = f"sim_3_{idx}"
+
+        if c1.button("유사 문제 1개 풀기", key=f"btn_1_{idx}"):
+            with st.spinner("문제 생성 중..."):
+                problems = generate_and_grade_similar(item.get('core_concept', '기본'), 1)
+                st.session_state.sim_problems_cache[btn1_key] = problems
+                add_log(user_id, subject, f"{q_num} 유사문제 1개", problems, log_type="Similar_Task")
+
+        if c2.button("유사 문제 3개 풀기", key=f"btn_3_{idx}"):
+            with st.spinner("문제 생성 중..."):
+                problems = generate_and_grade_similar(item.get('core_concept', '기본'), 3)
+                st.session_state.sim_problems_cache[btn3_key] = problems
+                add_log(user_id, subject, f"{q_num} 유사문제 3개", problems, log_type="Similar_Task")
+
+        # 생성된 문제가 캐시에 있다면 화면에 바로 표시 (중첩 팝업 에러 해결 핵심!)
+        if btn1_key in st.session_state.sim_problems_cache:
+            st.info(st.session_state.sim_problems_cache[btn1_key])
+        if btn3_key in st.session_state.sim_problems_cache:
+            st.info(st.session_state.sim_problems_cache[btn3_key])
+
+        st.divider()
 
 # ---------------------------------------------------------
 # 5. 학생 화면
@@ -180,10 +203,9 @@ def student_page():
 
     with left_col:
         st.markdown("<div class='card'>", unsafe_allow_html=True)
-        st.caption("📈 누적 학습 로그 [Req 2, 4]")
+        st.caption("📈 누적 학습 로그")
         logs = get_logs(user['user_id'])
         if not logs.empty:
-            # DB에 저장된 과목 정보를 기반으로 통계 표시
             sub_counts = logs['subject'].value_counts()
             st.bar_chart(sub_counts)
             st.divider()
@@ -205,16 +227,16 @@ def student_page():
             st.session_state.messages.append({"role": "user", "content": prompt})
             
             with st.spinner("AI가 과목을 파악하고 답변을 준비 중입니다..."):
-                auto_subject = classify_subject(prompt) # 과목 자동 분류 [Req 1]
+                auto_subject = classify_subject(prompt)
                 response = get_text_response(status, auto_subject, prompt)
                 
             st.chat_message("assistant").markdown(f"**[{auto_subject} 튜터]**\n{response}")
             st.session_state.messages.append({"role": "assistant", "content": f"[{auto_subject}] {response}"})
-            add_log(user['user_id'], auto_subject, prompt, response) # 파악된 과목 DB 저장 [Req 1, 4]
+            add_log(user['user_id'], auto_subject, prompt, response)
 
     with right_col:
         st.markdown("<div class='card' style='text-align:center;'>", unsafe_allow_html=True)
-        st.info("📷 문제 사진을 올려주세요\nAI가 채점 후 팝업으로 결과를 알려드려요!")
+        st.info("📷 문제 사진을 올려주세요\n여러 문제가 있어도 AI가 한 번에 채점해드려요!")
         uploaded_file = st.file_uploader("", type=['jpg', 'jpeg', 'png', 'pdf', 'heic', 'heif'])
         
         if uploaded_file:
@@ -224,25 +246,25 @@ def student_page():
                 st.image(standard_img, use_container_width=True)
                 
                 if st.button("사진 채점 및 분석 시작", use_container_width=True):
-                    with st.spinner("채점 중입니다..."):
+                    # 팝업을 새로 띄울 때마다 이전 캐시 초기화
+                    if "sim_problems_cache" in st.session_state:
+                        st.session_state.sim_problems_cache.clear()
+                        
+                    with st.spinner("여러 문제를 채점 중입니다..."):
                         buffer = io.BytesIO()
                         standard_img.save(buffer, format="JPEG", quality=85)
                         jpeg_bytes = buffer.getvalue()
                         b64_encoded = base64.b64encode(jpeg_bytes).decode('utf-8')
                         
-                        # 1. 스토리지 업로드
                         file_path = f"{user['user_id']}/{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
                         supabase.storage.from_("problem_images").upload(file_path, jpeg_bytes)
                         img_url = supabase.storage.from_("problem_images").get_public_url(file_path)
                         
-                        # 2. 과목 추출 및 채점 JSON 파싱
                         auto_subject = classify_subject("이 문제 사진의 과목이 뭐야?") 
                         analysis_data = analyze_vision_json(b64_encoded)
                         
-                        # 3. DB 저장 [Req 4]
-                        add_log(user['user_id'], auto_subject, f"사진 채점", json.dumps(analysis_data, ensure_ascii=False), img_url, "Vision")
+                        add_log(user['user_id'], auto_subject, f"사진 채점 (다중)", json.dumps(analysis_data, ensure_ascii=False), img_url, "Vision")
                         
-                        # 4. 팝업 호출 [Req 3]
                         grading_dialog(analysis_data, user['user_id'], auto_subject, img_url)
                         
             except Exception as e:
@@ -251,7 +273,7 @@ def student_page():
         st.markdown("</div>", unsafe_allow_html=True)
 
 # ---------------------------------------------------------
-# 6. 학부모 화면 (대시보드 및 권한 제어) [Req 2, 3]
+# 6. 학부모 화면
 # ---------------------------------------------------------
 def parent_page():
     st.title("👨‍👩‍👧‍👦 학부모 모니터링 대시보드")
@@ -262,7 +284,6 @@ def parent_page():
         target_id = st.selectbox("자녀 선택", [u['user_id'] for u in students])
         target_user = next(u for u in students if u['user_id'] == target_id)
         
-        # --- 권한 및 상태 제어 ---
         st.subheader("⚙️ 자녀 학습 권한 제어")
         c1, c2 = st.columns(2)
         with c1:
@@ -280,8 +301,6 @@ def parent_page():
                 if st.button("🔒 자녀의 '자세히 보기' 차단하기"): update_user_status(target_id, 'detail_permission', False); st.rerun()
                 
         st.divider()
-        
-        # --- 대시보드 (자동 파악된 과목 데이터 활용) [Req 2] ---
         st.subheader("📊 학습 현황 (AI 자동 분류 기반)")
         logs = get_logs(target_id)
         if not logs.empty:
