@@ -15,50 +15,35 @@ from pillow_heif import register_heif_opener
 register_heif_opener()
 
 # ---------------------------------------------------------
-# 1. 고도화된 UI 스타일 (Lovable & Modern 웹 스타일)
+# 1. 고도화된 UI 스타일
 # ---------------------------------------------------------
 st.set_page_config(layout="wide", page_title="Focus-Super-AI | Smart Learning")
 
 st.markdown("""
     <style>
-    /* 전체 배경색을 연한 회색으로 주어 카드(흰색)가 돋보이게 함 */
     .stApp { background-color: #f9fafb; }
     .block-container { padding-top: 2rem; max-width: 95%; }
     
-    /* 세련된 카드 디자인 (Lovable 스타일 그림자와 라운딩) */
     .card { 
-        background-color: white; 
-        padding: 24px; 
-        border-radius: 16px; 
+        background-color: white; padding: 24px; border-radius: 16px; 
         box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
-        border: 1px solid #f3f4f6;
-        margin-bottom: 20px;
+        border: 1px solid #f3f4f6; margin-bottom: 20px;
     }
     
-    /* 텍스트 및 타이틀 스타일 */
     .section-title { font-size: 16px; font-weight: 700; color: #111827; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
     .metric-label { font-size: 13px; color: #6b7280; font-weight: 500; text-align: center; margin-bottom: 8px;}
     .metric-value { font-size: 28px; font-weight: 800; color: #2563eb; text-align: center;}
     
-    /* 상태 배지 (알약 형태) */
-    .status-badge {
-        padding: 8px 16px;
-        border-radius: 9999px;
-        font-size: 14px;
-        font-weight: 600;
-        text-align: center;
-        margin-bottom: 16px;
-    }
+    .status-badge { padding: 8px 16px; border-radius: 9999px; font-size: 14px; font-weight: 600; text-align: center; margin-bottom: 16px; }
     .study-mode { background-color: #dbeafe; color: #1e40af; border: 1px solid #bfdbfe; }
     .break-mode { background-color: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
 
-    /* 경고 바 (오답 개념 등) */
     .alert-bar { background-color: #fef2f2; color: #b91c1c; padding: 12px 16px; border-radius: 12px; font-size: 13px; font-weight: 600; margin-bottom: 10px; border: 1px solid #fecaca; }
     
-    /* 버튼 텍스트 정렬 (목록처럼 보이게) */
-    button[kind="tertiary"] { text-align: left !important; justify-content: flex-start !important; padding: 8px 4px !important; color: #374151 !important; font-size: 14px !important; }
+    /* 레벨업 및 EXP UI 뱃지 */
+    .level-badge { background: linear-gradient(135deg, #f6d365 0%, #fda085 100%); color: white; padding: 4px 12px; border-radius: 20px; font-size: 14px; font-weight: bold; }
     
-    /* 🚀 에러 수정: 파이썬 코드가 아닌 CSS로 이미지 모서리 둥글게 처리 */
+    button[kind="tertiary"] { text-align: left !important; justify-content: flex-start !important; padding: 8px 4px !important; color: #374151 !important; font-size: 14px !important; }
     [data-testid="stImage"] img { border-radius: 8px; }
     </style>
     """, unsafe_allow_html=True)
@@ -74,7 +59,6 @@ def init_clients():
 
 supabase, groq = init_clients()
 
-# --- DB 헬퍼 함수 ---
 def get_user_info(user_id):
     res = supabase.table("users").select("*").eq("user_id", user_id).execute()
     return res.data[0] if res.data else None
@@ -86,18 +70,35 @@ def toggle_bookmark(log_id, current_val):
     supabase.table("logs").update({"is_bookmarked": not current_val}).eq("id", log_id).execute()
 
 def add_log(user_id, subject, question, answer, img_url=None, log_type="Text"):
-    res = supabase.table("logs").insert({"user_id": user_id, "subject": subject, "question": question, "answer": answer, "image_url": img_url, "log_type": log_type}).execute()
-    return res
+    return supabase.table("logs").insert({"user_id": user_id, "subject": subject, "question": question, "answer": answer, "image_url": img_url, "log_type": log_type}).execute()
 
 def get_logs(user_id):
     res = supabase.table("logs").select("*").eq("user_id", user_id).order("created_at", desc=True).execute()
     return pd.DataFrame(res.data) if res.data else pd.DataFrame()
 
+# [추가] EXP 및 레벨업 시스템 로직
+def add_exp(user_id, amount):
+    user = get_user_info(user_id)
+    if not user: return
+    
+    current_level = user.get('level', 1)
+    current_exp = user.get('exp', 0)
+    new_exp = current_exp + amount
+    exp_needed = current_level * 100  # 레벨업 필요 경험치 (Lv.1: 100, Lv.2: 200...)
+    
+    if new_exp >= exp_needed:
+        current_level += 1
+        new_exp = new_exp - exp_needed
+        st.toast(f"🎉 축하합니다! Level {current_level}(으)로 레벨 업 달성!", icon="🏆")
+        
+    supabase.table("users").update({"level": current_level, "exp": new_exp}).eq("user_id", user_id).execute()
+    st.session_state['user'] = get_user_info(user_id) # 세션 갱신
+
 # ---------------------------------------------------------
 # 3. AI 모델 로직
 # ---------------------------------------------------------
 def classify_subject(text):
-    prompt = f"다음 내용을 보고 '국어', '영어', '수학', '과학', '기타' 중 딱 하나의 단어로만 대답해:\n\n{text}"
+    prompt = f"다음 내용을 보고 '국어', '영어', '수학', '과학', '기타' 중 딱 하나로 대답해:\n\n{text}"
     try: return groq.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role": "user", "content": prompt}], temperature=0.1, max_tokens=10).choices[0].message.content.strip()
     except: return "기타"
 
@@ -124,6 +125,12 @@ def analyze_vision_json(b64_encoded_jpeg):
 def generate_and_grade_similar(core_concept, count):
     return groq.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role": "user", "content": f"핵심 개념 '{core_concept}'에 대한 객관식/단답형 문제 {count}개를 내고 정답도 알려줘."}]).choices[0].message.content
 
+def generate_review_quiz(concepts):
+    """오답 노트를 기반으로 복습 퀴즈를 생성하는 AI 함수"""
+    concept_str = ", ".join(concepts)
+    prompt = f"학생이 최근 틀렸던 핵심 개념들입니다: [{concept_str}]. 이 개념들을 복습할 수 있는 객관식 또는 단답형 문제 3개를 내고, 하단에 정답과 해설을 명확히 분리해서 제공해 주세요."
+    return groq.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role": "user", "content": prompt}], temperature=0.5, max_tokens=1024).choices[0].message.content
+
 def get_standardized_image(uploaded_file):
     if uploaded_file.name.split('.')[-1].lower() == 'pdf':
         pix = fitz.open(stream=uploaded_file.read(), filetype="pdf").load_page(0).get_pixmap(dpi=150)
@@ -140,8 +147,7 @@ def ai_report_dialog(recent_logs):
         analysis_text = analyze_vulnerabilities(recent_logs)
         st.markdown(analysis_text)
     st.divider()
-    if st.button("닫기", use_container_width=True):
-        st.rerun()
+    if st.button("닫기", use_container_width=True): st.rerun()
 
 @st.dialog("📝 상세 질의 내용")
 def qa_detail_dialog(log_id, q, a, is_bm):
@@ -169,54 +175,86 @@ def grading_dialog(analysis_data, user_id, subject, img_url):
 
         c1, c2 = st.columns(2)
         btn1, btn3 = f"sim_1_{idx}", f"sim_3_{idx}"
-        if c1.button("유사 문제 1개 풀기", key=f"btn_1_{idx}"):
+        if c1.button("유사 문제 1개 풀기 (+10 EXP)", key=f"btn_1_{idx}"):
             with st.spinner("생성 중..."):
                 probs = generate_and_grade_similar(item.get('core_concept', ''), 1)
                 st.session_state.sim_problems_cache[btn1] = probs
                 add_log(user_id, subject, f"{q_num} 유사문제 1개", probs, log_type="Similar_Task")
-        if c2.button("유사 문제 3개 풀기", key=f"btn_3_{idx}"):
+                add_exp(user_id, 10) # 경험치 보상
+        if c2.button("유사 문제 3개 풀기 (+30 EXP)", key=f"btn_3_{idx}"):
             with st.spinner("생성 중..."):
                 probs = generate_and_grade_similar(item.get('core_concept', ''), 3)
                 st.session_state.sim_problems_cache[btn3] = probs
                 add_log(user_id, subject, f"{q_num} 유사문제 3개", probs, log_type="Similar_Task")
+                add_exp(user_id, 30) # 경험치 보상
 
         if btn1 in st.session_state.sim_problems_cache: st.info(st.session_state.sim_problems_cache[btn1])
         if btn3 in st.session_state.sim_problems_cache: st.info(st.session_state.sim_problems_cache[btn3])
         st.divider()
+
+@st.dialog("📚 오답 맞춤 복습 퀴즈", width="large")
+def review_quiz_dialog(concepts):
+    with st.spinner("AI가 오답 노트 개념을 분석하여 맞춤형 모의고사를 출제하고 있습니다..."):
+        quiz_text = generate_review_quiz(concepts)
+        st.markdown(quiz_text)
+    st.divider()
+    if st.button("풀이 완료 및 닫기", use_container_width=True): st.rerun()
 
 # ---------------------------------------------------------
 # 5. 학생 화면
 # ---------------------------------------------------------
 def student_page():
     user = st.session_state['user']
-    status = get_user_info(user['user_id']).get('status', 'studying')
+    status = user.get('status', 'studying')
+    user_level = user.get('level', 1)
+    user_exp = user.get('exp', 0)
+    exp_needed = user_level * 100
+    progress_val = min(user_exp / exp_needed, 1.0)
+    
     logs = get_logs(user['user_id'])
     bm_dict = {row['id']: row['is_bookmarked'] for _, row in logs.iterrows()} if not logs.empty else {}
 
     t1, t2 = st.columns([9, 1])
     with t2:
-        if st.button("🔄 새로고침", use_container_width=True): st.rerun()
+        if st.button("🔄 새로고침", use_container_width=True): st.session_state['user']=get_user_info(user['user_id']); st.rerun()
 
     left_col, center_col, right_col = st.columns([2.5, 5, 2.5])
 
-    # 1️⃣ 왼쪽: 대시보드 패널
+    # 1️⃣ 왼쪽: 대시보드 및 오답 노트
     with left_col:
         with st.container(height=800, border=False):
-            st.markdown("<div class='card'><div class='section-title'>💬 과목별 질문 수</div>", unsafe_allow_html=True)
-            if not logs.empty: st.bar_chart(logs['subject'].value_counts(), height=130)
+            # [추가] 게이미피케이션 프로필
+            st.markdown("<div class='card'>", unsafe_allow_html=True)
+            st.markdown(f"<span class='level-badge'>Lv.{user_level} AI 탐험가</span>", unsafe_allow_html=True)
+            st.markdown(f"<div style='margin-top:10px; font-weight:bold;'>경험치: {user_exp} / {exp_needed} EXP</div>", unsafe_allow_html=True)
+            st.progress(progress_val)
             st.markdown("</div>", unsafe_allow_html=True)
-            
-            st.markdown("<div class='card'><div class='section-title'>🕒 최근 질문</div>", unsafe_allow_html=True)
+
+            # [추가] 나의 오답 노트 기능
+            st.markdown("<div class='card'><div class='section-title'>📚 나의 오답 노트</div>", unsafe_allow_html=True)
+            wrong_concepts = []
             if not logs.empty:
-                for _, row in logs.head(3).iterrows():
-                    if st.button(f"Q: {str(row['question'])[:18]}...", key=f"past_{row['id']}", type="tertiary", use_container_width=True):
-                        qa_detail_dialog(row['id'], row['question'], row['answer'], row.get('is_bookmarked', False))
+                vision_logs = logs[logs['log_type'] == 'Vision']
+                for _, row in vision_logs.head(10).iterrows():
+                    try:
+                        data = json.loads(row['answer'])
+                        for res in data.get('results', []):
+                            if not res.get('is_correct'):
+                                concept = res.get('core_concept', '기타')
+                                wrong_concepts.append(concept)
+                                st.markdown(f"❌ <span style='font-size:13px'>{concept}</span>", unsafe_allow_html=True)
+                    except: pass
+            
+            if wrong_concepts:
+                st.markdown("<br>", unsafe_allow_html=True)
+                if st.button("✨ 오답 복습 퀴즈 생성 (+20 EXP)", use_container_width=True, type="primary"):
+                    add_exp(user['user_id'], 20)
+                    review_quiz_dialog(list(set(wrong_concepts))[:5])
+            else:
+                st.caption("아직 기록된 오답이 없습니다. 훌륭해요!")
             st.markdown("</div>", unsafe_allow_html=True)
             
-            st.markdown("<div class='card'><div class='section-title'>📖 추천 공부 개념</div>", unsafe_allow_html=True)
-            if not logs.empty: st.caption(get_ai_recommendations(str(logs['question'].head(5).tolist())))
-            st.markdown("</div>", unsafe_allow_html=True)
-            
+            # 기존 북마크 리스트
             st.markdown("<div class='card'><div class='section-title'>🔖 북마크된 답변</div>", unsafe_allow_html=True)
             if not logs.empty and 'is_bookmarked' in logs.columns:
                 bm_logs = logs[logs['is_bookmarked'] == True]
@@ -243,7 +281,7 @@ def student_page():
                         if st.button("⭐ 북마크 해제" if is_bm else "☆ 북마크 하기", key=f"chat_bm_{log_id}"):
                             toggle_bookmark(log_id, is_bm); st.rerun()
 
-        if prompt := st.chat_input("공부하다 궁금한 점을 물어보세요!"):
+        if prompt := st.chat_input("공부하다 궁금한 점을 물어보세요! (+10 EXP)"):
             st.session_state.messages.append({"role": "user", "content": prompt}); st.rerun()
 
         if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
@@ -256,20 +294,20 @@ def student_page():
                         st.markdown(f"**[{auto_subject} 튜터]**\n{response}")
                         res = add_log(user['user_id'], auto_subject, prompt, response, log_type=log_type)
                         new_log_id = res.data[0]['id'] if res.data else None
+                        add_exp(user['user_id'], 10) # 질문 완료시 경험치
             st.session_state.messages.append({"role": "assistant", "content": f"**[{auto_subject} 튜터]**\n{response}", "log_id": new_log_id}); st.rerun()
 
     # 3️⃣ 오른쪽: 사진 업로드 패널
     with right_col:
         with st.container(height=800, border=False):
-            st.markdown("<div class='card' style='text-align:center;'><b>📷 문제 사진 업로드</b><br><span style='font-size:12px;color:gray'>풀이한 문제를 올리면 AI가 채점해드려요!</span></div>", unsafe_allow_html=True)
+            st.markdown("<div class='card' style='text-align:center;'><b>📷 문제 사진 업로드</b><br><span style='font-size:12px;color:gray'>정답 맞히면 보너스 EXP 지급!</span></div>", unsafe_allow_html=True)
             uploaded_file = st.file_uploader("", type=['jpg', 'jpeg', 'png', 'pdf', 'heic', 'heif'], label_visibility="collapsed")
             if uploaded_file:
                 try:
                     standard_img = get_standardized_image(uploaded_file)
                     st.session_state.current_img_obj = standard_img
-                    # 🚀 에러 원인이었던 style 인자 제거 (위의 CSS에서 처리됨)
                     st.image(standard_img, use_container_width=True)
-                    if st.button("✅ 사진 채점 및 분석 시작", use_container_width=True, type="primary"):
+                    if st.button("✅ 사진 채점 및 분석 시작 (+20 EXP)", use_container_width=True, type="primary"):
                         if "sim_problems_cache" in st.session_state: st.session_state.sim_problems_cache.clear()
                         with st.spinner("AI 비전 모델이 채점 중입니다..."):
                             buffer = io.BytesIO()
@@ -283,6 +321,12 @@ def student_page():
                             auto_subject = classify_subject("이 사진 과목?") 
                             analysis_data = analyze_vision_json(b64_encoded)
                             add_log(user['user_id'], auto_subject, f"사진 채점 (다중)", json.dumps(analysis_data, ensure_ascii=False), img_url, "Vision")
+                            
+                            # 경험치 보상 계산
+                            correct_count = sum(1 for item in analysis_data.get('results', []) if item.get('is_correct'))
+                            earned_exp = 20 + (correct_count * 30) # 기본 20 + 정답당 30
+                            add_exp(user['user_id'], earned_exp)
+                            
                             grading_dialog(analysis_data, user['user_id'], auto_subject, img_url)
                 except Exception as e: st.error(f"오류: {e}")
 
@@ -329,12 +373,13 @@ def parent_page():
             
         accuracy = int((correct_cnt / total_vision) * 100) if total_vision > 0 else 0
         
-        # 1. 지표 카드
+        # 1. 지표 카드 (레벨 추가)
         st.markdown("<div class='card'>", unsafe_allow_html=True)
-        m1, m2, m3 = st.columns(3)
-        with m1: st.markdown(f"<div class='metric-label'>이번 주 학습 시간</div><div class='metric-value'>6h 20m</div>", unsafe_allow_html=True)
-        with m2: st.markdown(f"<div class='metric-label'>누적 질문 수</div><div class='metric-value'>{total_q}건</div>", unsafe_allow_html=True)
-        with m3: st.markdown(f"<div class='metric-label'>평균 정답률</div><div class='metric-value'>{accuracy}%</div>", unsafe_allow_html=True)
+        m1, m2, m3, m4 = st.columns(4)
+        with m1: st.markdown(f"<div class='metric-label'>현재 레벨</div><div class='metric-value'>Lv.{target_user.get('level', 1)}</div>", unsafe_allow_html=True)
+        with m2: st.markdown(f"<div class='metric-label'>총 질문 수</div><div class='metric-value'>{total_q}건</div>", unsafe_allow_html=True)
+        with m3: st.markdown(f"<div class='metric-label'>정답률</div><div class='metric-value'>{accuracy}%</div>", unsafe_allow_html=True)
+        with m4: st.markdown(f"<div class='metric-label'>주간 공부 시간</div><div class='metric-value'>6h 20m</div>", unsafe_allow_html=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
         # 2. 오답 경고 (Alerts)
