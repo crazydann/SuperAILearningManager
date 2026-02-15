@@ -6,4 +6,3 @@ plotly
 Pillow
 pillow-heif
 pymupdf
-streamlit-autorefresh
