@@ -4,3 +4,5 @@ groq
 pandas
 plotly
 Pillow
+pillow-heif
+pymupdf
