@@ -15,24 +15,48 @@ from pillow_heif import register_heif_opener
 register_heif_opener()
 
 # ---------------------------------------------------------
-# 1. 초기 설정 및 UI/UX 고정형 스타일
+# 1. 고도화된 UI 스타일 (Lovable & Modern 웹 스타일)
 # ---------------------------------------------------------
-st.set_page_config(layout="wide", page_title="Focus-Super-AI Learning Manager")
+st.set_page_config(layout="wide", page_title="Focus-Super-AI | Smart Learning")
 
 st.markdown("""
     <style>
-    .block-container { padding-top: 1rem; padding-bottom: 0rem; max-width: 100%; overflow-y: hidden; }
-    .card { background-color: white; padding: 15px; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); border: 1px solid #e5e7eb; margin-bottom: 15px; }
-    .section-title { font-size: 14px; font-weight: bold; color: #6b7280; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
-    .status-study { color: white; background-color: #3b82f6; padding: 10px; border-radius: 8px; font-weight: bold; text-align: center; margin-bottom: 10px; }
-    .status-break { color: white; background-color: #22c55e; padding: 10px; border-radius: 8px; font-weight: bold; text-align: center; margin-bottom: 10px; }
-    button[kind="tertiary"] { text-align: left !important; justify-content: flex-start !important; padding: 5px 0px !important; color: #374151 !important; font-size: 14px !important; }
+    /* 전체 배경색을 연한 회색으로 주어 카드(흰색)가 돋보이게 함 */
+    .stApp { background-color: #f9fafb; }
+    .block-container { padding-top: 2rem; max-width: 95%; }
     
-    /* 대시보드 전용 스타일 */
-    .metric-value { font-size: 24px; font-weight: bold; color: #1f2937; text-align: center; }
-    .metric-label { font-size: 12px; color: #6b7280; text-align: center; margin-bottom: 10px; }
-    .alert-bar { background-color: #fee2e2; color: #ef4444; padding: 10px 15px; border-radius: 6px; font-size: 13px; font-weight: bold; margin-bottom: 8px; display: flex; align-items: center; gap: 10px; }
-    .pill-tag { background-color: #fef3c7; color: #d97706; padding: 5px 12px; border-radius: 20px; font-size: 12px; font-weight: bold; display: inline-block; margin: 0 5px 5px 0; }
+    /* 세련된 카드 디자인 (Lovable 스타일 그림자와 라운딩) */
+    .card { 
+        background-color: white; 
+        padding: 24px; 
+        border-radius: 16px; 
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+        border: 1px solid #f3f4f6;
+        margin-bottom: 20px;
+    }
+    
+    /* 텍스트 및 타이틀 스타일 */
+    .section-title { font-size: 16px; font-weight: 700; color: #111827; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+    .metric-label { font-size: 13px; color: #6b7280; font-weight: 500; text-align: center; margin-bottom: 8px;}
+    .metric-value { font-size: 28px; font-weight: 800; color: #2563eb; text-align: center;}
+    
+    /* 상태 배지 (알약 형태) */
+    .status-badge {
+        padding: 8px 16px;
+        border-radius: 9999px;
+        font-size: 14px;
+        font-weight: 600;
+        text-align: center;
+        margin-bottom: 16px;
+    }
+    .study-mode { background-color: #dbeafe; color: #1e40af; border: 1px solid #bfdbfe; }
+    .break-mode { background-color: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
+
+    /* 경고 바 (오답 개념 등) */
+    .alert-bar { background-color: #fef2f2; color: #b91c1c; padding: 12px 16px; border-radius: 12px; font-size: 13px; font-weight: 600; margin-bottom: 10px; border: 1px solid #fecaca; }
+    
+    /* 버튼 텍스트 정렬 (목록처럼 보이게) */
+    button[kind="tertiary"] { text-align: left !important; justify-content: flex-start !important; padding: 8px 4px !important; color: #374151 !important; font-size: 14px !important; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -47,6 +71,7 @@ def init_clients():
 
 supabase, groq = init_clients()
 
+# --- DB 헬퍼 함수 ---
 def get_user_info(user_id):
     res = supabase.table("users").select("*").eq("user_id", user_id).execute()
     return res.data[0] if res.data else None
@@ -83,7 +108,6 @@ def get_ai_recommendations(logs_json):
     try: return groq.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role": "user", "content": f"학습 기록: {logs_json}. 추천 핵심 개념 3가지를 불릿 포인트(-)로 제안해."}], temperature=0.5, max_tokens=300).choices[0].message.content
     except: return "- 학습 데이터 부족"
 
-@st.cache_data(ttl=600)
 def analyze_vulnerabilities(logs_json):
     safe_logs = str(logs_json)[:4000]
     prompt = f"학습 기록: {safe_logs}\n\n과목별 취약점을 분석하고 극복을 위한 추천 개념을 해시태그 형식(#개념)으로 포함해서 작성해줘."
@@ -107,7 +131,17 @@ def get_standardized_image(uploaded_file):
 # ---------------------------------------------------------
 # 4. 팝업(Dialog) UI 설계
 # ---------------------------------------------------------
-@st.dialog("📝 상세 내용 보기")
+@st.dialog("🧠 AI 과목별 취약점 리포트", width="large")
+def ai_report_dialog(recent_logs):
+    """학부모 화면의 분석 결과를 띄워주는 팝업 (화면 잠김 현상 해결!)"""
+    with st.spinner("최근 학습 데이터를 기반으로 AI가 취약점을 분석 중입니다..."):
+        analysis_text = analyze_vulnerabilities(recent_logs)
+        st.markdown(analysis_text)
+    st.divider()
+    if st.button("닫기", use_container_width=True):
+        st.rerun()
+
+@st.dialog("📝 상세 질의 내용")
 def qa_detail_dialog(log_id, q, a, is_bm):
     st.markdown(f"**🗣️ 질문:** {q}")
     st.info(f"**🤖 답변:**\n\n{a}")
@@ -149,7 +183,7 @@ def grading_dialog(analysis_data, user_id, subject, img_url):
         st.divider()
 
 # ---------------------------------------------------------
-# 5. 학생 화면 (수동 새로고침 추가)
+# 5. 학생 화면
 # ---------------------------------------------------------
 def student_page():
     user = st.session_state['user']
@@ -157,21 +191,20 @@ def student_page():
     logs = get_logs(user['user_id'])
     bm_dict = {row['id']: row['is_bookmarked'] for _, row in logs.iterrows()} if not logs.empty else {}
 
-    # 상단 수동 새로고침 버튼
     t1, t2 = st.columns([9, 1])
     with t2:
         if st.button("🔄 새로고침", use_container_width=True): st.rerun()
 
-    left_col, center_col, right_col = st.columns([2.2, 5.3, 2.5])
+    left_col, center_col, right_col = st.columns([2.5, 5, 2.5])
 
-    # 1️⃣ 왼쪽 프레임
+    # 1️⃣ 왼쪽: 대시보드 패널
     with left_col:
         with st.container(height=800, border=False):
-            st.markdown("<div class='card'><div class='section-title'>💬 질문 및 응답 수</div>", unsafe_allow_html=True)
+            st.markdown("<div class='card'><div class='section-title'>💬 과목별 질문 수</div>", unsafe_allow_html=True)
             if not logs.empty: st.bar_chart(logs['subject'].value_counts(), height=130)
             st.markdown("</div>", unsafe_allow_html=True)
             
-            st.markdown("<div class='card'><div class='section-title'>🕒 지난 질의</div>", unsafe_allow_html=True)
+            st.markdown("<div class='card'><div class='section-title'>🕒 최근 질문</div>", unsafe_allow_html=True)
             if not logs.empty:
                 for _, row in logs.head(3).iterrows():
                     if st.button(f"Q: {str(row['question'])[:18]}...", key=f"past_{row['id']}", type="tertiary", use_container_width=True):
@@ -182,18 +215,18 @@ def student_page():
             if not logs.empty: st.caption(get_ai_recommendations(str(logs['question'].head(5).tolist())))
             st.markdown("</div>", unsafe_allow_html=True)
             
-            st.markdown("<div class='card'><div class='section-title'>🔖 Bookmarked Answers</div>", unsafe_allow_html=True)
+            st.markdown("<div class='card'><div class='section-title'>🔖 북마크된 답변</div>", unsafe_allow_html=True)
             if not logs.empty and 'is_bookmarked' in logs.columns:
                 bm_logs = logs[logs['is_bookmarked'] == True]
                 for idx, row in enumerate(bm_logs.head(5).iterrows()):
-                    if st.button(f"{idx+1}. {str(row[1]['question'])[:15]}...", key=f"bkmk_{row[1]['id']}", type="tertiary", use_container_width=True):
+                    if st.button(f"⭐ {str(row[1]['question'])[:15]}...", key=f"bkmk_{row[1]['id']}", type="tertiary", use_container_width=True):
                         qa_detail_dialog(row[1]['id'], row[1]['question'], row[1]['answer'], True)
             st.markdown("</div>", unsafe_allow_html=True)
 
-    # 2️⃣ 중앙 프레임
+    # 2️⃣ 중앙: 채팅 패널
     with center_col:
-        if status == "studying": st.markdown('<div class="status-study">🔥 현재 집중 학습 중 (공부 질문만 가능)</div>', unsafe_allow_html=True)
-        else: st.markdown('<div class="status-break">🍀 즐거운 쉬는 시간 (자유롭게 대화하세요!)</div>', unsafe_allow_html=True)
+        if status == "studying": st.markdown('<div class="status-badge study-mode">🔥 집중 학습 모드 활성화 중</div>', unsafe_allow_html=True)
+        else: st.markdown('<div class="status-badge break-mode">🍀 쉬는 시간: 자유 대화 모드</div>', unsafe_allow_html=True)
         
         chat_container = st.container(height=650, border=True) 
         if "messages" not in st.session_state: st.session_state.messages = []
@@ -208,14 +241,14 @@ def student_page():
                         if st.button("⭐ 북마크 해제" if is_bm else "☆ 북마크 하기", key=f"chat_bm_{log_id}"):
                             toggle_bookmark(log_id, is_bm); st.rerun()
 
-        if prompt := st.chat_input("안녕하세요! 🎓 Focus-Super-AI 학습 도우미예요."):
+        if prompt := st.chat_input("공부하다 궁금한 점을 물어보세요!"):
             st.session_state.messages.append({"role": "user", "content": prompt}); st.rerun()
 
         if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
             prompt = st.session_state.messages[-1]["content"]
             with chat_container:
                 with st.chat_message("assistant"):
-                    with st.spinner("AI 선생님이 생각 중입니다..."):
+                    with st.spinner("AI가 생각 중입니다..."):
                         auto_subject = classify_subject(prompt)
                         response, log_type = get_text_response(status, auto_subject, prompt)
                         st.markdown(f"**[{auto_subject} 튜터]**\n{response}")
@@ -223,19 +256,19 @@ def student_page():
                         new_log_id = res.data[0]['id'] if res.data else None
             st.session_state.messages.append({"role": "assistant", "content": f"**[{auto_subject} 튜터]**\n{response}", "log_id": new_log_id}); st.rerun()
 
-    # 3️⃣ 오른쪽 프레임
+    # 3️⃣ 오른쪽: 사진 업로드 패널
     with right_col:
         with st.container(height=800, border=False):
-            st.markdown("<div class='card' style='text-align:center;'><b>📷 문제 사진을 올려주세요</b><br><span style='font-size:12px;color:gray'>풀이한 문제를 올리면 AI가 채점해드려요!</span></div>", unsafe_allow_html=True)
+            st.markdown("<div class='card' style='text-align:center;'><b>📷 문제 사진 업로드</b><br><span style='font-size:12px;color:gray'>풀이한 문제를 올리면 AI가 채점해드려요!</span></div>", unsafe_allow_html=True)
             uploaded_file = st.file_uploader("", type=['jpg', 'jpeg', 'png', 'pdf', 'heic', 'heif'], label_visibility="collapsed")
             if uploaded_file:
                 try:
                     standard_img = get_standardized_image(uploaded_file)
                     st.session_state.current_img_obj = standard_img
-                    st.image(standard_img, use_container_width=True)
-                    if st.button("사진 채점 및 분석 시작", use_container_width=True):
+                    st.image(standard_img, use_container_width=True, style={"border-radius": "8px"})
+                    if st.button("✅ 사진 채점 및 분석 시작", use_container_width=True, type="primary"):
                         if "sim_problems_cache" in st.session_state: st.session_state.sim_problems_cache.clear()
-                        with st.spinner("채점 중입니다..."):
+                        with st.spinner("AI 비전 모델이 채점 중입니다..."):
                             buffer = io.BytesIO()
                             standard_img.save(buffer, format="JPEG", quality=85)
                             jpeg_bytes = buffer.getvalue()
@@ -251,12 +284,11 @@ def student_page():
                 except Exception as e: st.error(f"오류: {e}")
 
 # ---------------------------------------------------------
-# 6. 학부모 화면 (UI 전면 개편 및 수동 새로고침)
+# 6. 학부모 화면 (UI 전면 개편 & 팝업 리포트)
 # ---------------------------------------------------------
 def parent_page():
-    st.markdown("<br>", unsafe_allow_html=True) # 상단 여백
+    st.markdown("<br>", unsafe_allow_html=True) 
     
-    # 상단 컨트롤 및 새로고침 바
     res = supabase.table("users").select("*").eq("role", "student").execute()
     students = res.data if res.data else []
     
@@ -278,7 +310,6 @@ def parent_page():
             
         logs = get_logs(target_id)
         
-        # 실제 데이터 기반 수치 계산 (DB 파싱)
         total_q = len(logs)
         vision_logs = logs[logs['log_type'] == 'Vision']
         correct_cnt, total_vision = 0, 0
@@ -295,7 +326,7 @@ def parent_page():
             
         accuracy = int((correct_cnt / total_vision) * 100) if total_vision > 0 else 0
         
-        # 1. KPI 지표 (화면 캡처 반영)
+        # 1. 지표 카드
         st.markdown("<div class='card'>", unsafe_allow_html=True)
         m1, m2, m3 = st.columns(3)
         with m1: st.markdown(f"<div class='metric-label'>이번 주 학습 시간</div><div class='metric-value'>6h 20m</div>", unsafe_allow_html=True)
@@ -303,48 +334,32 @@ def parent_page():
         with m3: st.markdown(f"<div class='metric-label'>평균 정답률</div><div class='metric-value'>{accuracy}%</div>", unsafe_allow_html=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
-        # 2. 오답 경고 알림 바 (Red bars)
+        # 2. 오답 경고 (Alerts)
         if wrong_concepts:
-            st.markdown("<div style='font-size:14px; font-weight:bold; margin-bottom:10px;'>🚨 자녀가 자주 틀리는 개념 알림</div>", unsafe_allow_html=True)
-            for concept in list(set(wrong_concepts))[:3]: # 최근 틀린 개념 최대 3개
-                st.markdown(f"<div class='alert-bar'>⚠️ 문제 오답: '{concept}' 관련 복습이 필요합니다.</div>", unsafe_allow_html=True)
-            st.markdown("<br>", unsafe_allow_html=True)
+            st.markdown("<div class='section-title'>🚨 자녀가 자주 틀리는 개념</div>", unsafe_allow_html=True)
+            for concept in list(set(wrong_concepts))[:3]: 
+                st.markdown(f"<div class='alert-bar'>⚠️ '{concept}' 개념의 복습이 시급합니다.</div>", unsafe_allow_html=True)
 
-        # 3. 차트 섹션 (가짜 주간 데이터 + 실제 과목 데이터)
+        # 3. 차트 섹션
         c1, c2 = st.columns([6, 4])
         with c1:
-            st.markdown("<div class='card'><div class='section-title'>📊 주간 퀴즈 정답률 추이</div>", unsafe_allow_html=True)
+            st.markdown("<div class='card'><div class='section-title'>📊 주간 정답률 추이</div>", unsafe_allow_html=True)
             dummy_line = pd.DataFrame({'일차': ['월','화','수','목','금','토'], '정답률': [75, 80, 78, 85, 90, accuracy]})
-            st.plotly_chart(px.line(dummy_line, x='일차', y='정답률', markers=True, height=250), use_container_width=True)
+            st.plotly_chart(px.line(dummy_line, x='일차', y='정답률', markers=True, height=220), use_container_width=True)
             st.markdown("</div>", unsafe_allow_html=True)
             
         with c2:
-            st.markdown("<div class='card'><div class='section-title'>🥧 과목별 학습 비중 (실제 데이터)</div>", unsafe_allow_html=True)
-            if not logs.empty:
-                st.plotly_chart(px.pie(logs, names='subject', hole=0.5, height=250), use_container_width=True)
+            st.markdown("<div class='card'><div class='section-title'>🥧 과목별 질문 비중</div>", unsafe_allow_html=True)
+            if not logs.empty: st.plotly_chart(px.pie(logs, names='subject', hole=0.5, height=220), use_container_width=True)
             else: st.info("데이터가 부족합니다.")
             st.markdown("</div>", unsafe_allow_html=True)
 
-        # 4. AI 취약점 분석 리포트 (수동 새로고침으로 인해 더 이상 사라지지 않음)
-        st.markdown("<div class='card'><div class='section-title'>🧠 AI 과목별 취약점 극복 가이드</div>", unsafe_allow_html=True)
-        if st.button("✨ 최신 데이터로 AI 분석 시작"):
-            with st.spinner("최근 학습 데이터를 기반으로 AI가 취약점을 분석 중입니다..."):
-                recent_logs = logs[['subject', 'question']].head(15).to_dict('records')
-                analysis_text = analyze_vulnerabilities(recent_logs)
-                
-                # 분석 결과를 캐시(Session State)에 저장하여 화면에 유지
-                st.session_state['ai_report'] = analysis_text
-
-        # 저장된 리포트가 있으면 출력 (해시태그를 알약 버튼처럼 예쁘게 꾸밈)
-        if 'ai_report' in st.session_state:
-            st.markdown(st.session_state['ai_report'])
-            
-            # 태그 UI (시각적 연출)
-            st.markdown("<br><b>💡 추천 학습 개념 태그</b><br>", unsafe_allow_html=True)
-            tags = ["방정식 풀이", "문법 시제", "독해 추론", "광합성 원리"] if not wrong_concepts else wrong_concepts[:4]
-            tags_html = "".join([f"<span class='pill-tag'># {tag}</span>" for tag in tags])
-            st.markdown(tags_html, unsafe_allow_html=True)
-            
+        # 4. AI 리포트 팝업 호출 (화면 밀림 현상 완벽 해결)
+        st.markdown("<div class='card'><div class='section-title'>🧠 AI 과목별 취약점 진단</div>", unsafe_allow_html=True)
+        st.markdown("<span style='color:gray; font-size:14px;'>최근 15개의 학습 기록을 바탕으로 취약점을 심층 분석합니다.</span><br><br>", unsafe_allow_html=True)
+        if st.button("✨ 팝업으로 AI 분석 리포트 열기", type="primary"):
+            recent_logs = logs[['subject', 'question']].head(15).to_dict('records')
+            ai_report_dialog(recent_logs)
         st.markdown("</div>", unsafe_allow_html=True)
 
 # ---------------------------------------------------------
@@ -352,18 +367,21 @@ def parent_page():
 # ---------------------------------------------------------
 if "logged_in" not in st.session_state: st.session_state['logged_in'] = False
 if not st.session_state['logged_in']:
-    st.markdown("<br><h1 style='text-align: center;'>🏫 Focus-Super-AI Login</h1>", unsafe_allow_html=True)
+    st.markdown("<br><h1 style='text-align: center; color:#1f2937;'>🎓 Focus-Super-AI</h1>", unsafe_allow_html=True)
     col1, col2, col3 = st.columns([1,2,1])
     with col2:
-        user_id = st.text_input("아이디")
+        st.markdown("<div class='card'>", unsafe_allow_html=True)
+        user_id = st.text_input("아이디 (학생: joshua / 학부모: parent_joshua)")
         password = st.text_input("비밀번호", type="password")
-        if st.button("로그인", use_container_width=True):
+        if st.button("로그인", use_container_width=True, type="primary"):
             user_info = get_user_info(user_id)
             if user_info and password in ["1234", (datetime.datetime.now() + datetime.timedelta(hours=9)).strftime("%m%d")]:
                 st.session_state['user'] = user_info; st.session_state['logged_in'] = True; st.rerun()
             else: st.error("로그인 정보 오류")
+        st.markdown("</div>", unsafe_allow_html=True)
 else:
     with st.sidebar:
-        if st.button("로그아웃"): st.session_state.clear(); st.rerun()
+        st.markdown(f"**👤 {st.session_state['user']['name']}님 환영합니다.**")
+        if st.button("로그아웃", use_container_width=True): st.session_state.clear(); st.rerun()
     if st.session_state['user']['role'] == 'student': student_page()
     else: parent_page()
