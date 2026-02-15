@@ -142,8 +142,8 @@ def student_page():
                 with st.spinner("이미지 분석 중..."):
                     # 1. 스토리지 업로드
                     file_path = f"{user['user_id']}/{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
-                    supabase.storage.from_("problem-images").upload(file_path, uploaded_file.getvalue())
-                    img_url = supabase.storage.from_("problem-images").get_public_url(file_path)
+                    supabase.storage.from_("problem_images").upload(file_path, uploaded_file.getvalue())
+                    img_url = supabase.storage.from_("problem_images").get_public_url(file_path)
                     
                     # 2. 비전 AI 호출
                     analysis = analyze_vision_response(uploaded_file, subject)
