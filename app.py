@@ -57,6 +57,9 @@ st.markdown("""
     
     /* 버튼 텍스트 정렬 (목록처럼 보이게) */
     button[kind="tertiary"] { text-align: left !important; justify-content: flex-start !important; padding: 8px 4px !important; color: #374151 !important; font-size: 14px !important; }
+    
+    /* 🚀 에러 수정: 파이썬 코드가 아닌 CSS로 이미지 모서리 둥글게 처리 */
+    [data-testid="stImage"] img { border-radius: 8px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -133,7 +136,6 @@ def get_standardized_image(uploaded_file):
 # ---------------------------------------------------------
 @st.dialog("🧠 AI 과목별 취약점 리포트", width="large")
 def ai_report_dialog(recent_logs):
-    """학부모 화면의 분석 결과를 띄워주는 팝업 (화면 잠김 현상 해결!)"""
     with st.spinner("최근 학습 데이터를 기반으로 AI가 취약점을 분석 중입니다..."):
         analysis_text = analyze_vulnerabilities(recent_logs)
         st.markdown(analysis_text)
@@ -265,7 +267,8 @@ def student_page():
                 try:
                     standard_img = get_standardized_image(uploaded_file)
                     st.session_state.current_img_obj = standard_img
-                    st.image(standard_img, use_container_width=True, style={"border-radius": "8px"})
+                    # 🚀 에러 원인이었던 style 인자 제거 (위의 CSS에서 처리됨)
+                    st.image(standard_img, use_container_width=True)
                     if st.button("✅ 사진 채점 및 분석 시작", use_container_width=True, type="primary"):
                         if "sim_problems_cache" in st.session_state: st.session_state.sim_problems_cache.clear()
                         with st.spinner("AI 비전 모델이 채점 중입니다..."):
@@ -284,7 +287,7 @@ def student_page():
                 except Exception as e: st.error(f"오류: {e}")
 
 # ---------------------------------------------------------
-# 6. 학부모 화면 (UI 전면 개편 & 팝업 리포트)
+# 6. 학부모 화면
 # ---------------------------------------------------------
 def parent_page():
     st.markdown("<br>", unsafe_allow_html=True) 
@@ -354,7 +357,7 @@ def parent_page():
             else: st.info("데이터가 부족합니다.")
             st.markdown("</div>", unsafe_allow_html=True)
 
-        # 4. AI 리포트 팝업 호출 (화면 밀림 현상 완벽 해결)
+        # 4. AI 리포트 팝업 호출
         st.markdown("<div class='card'><div class='section-title'>🧠 AI 과목별 취약점 진단</div>", unsafe_allow_html=True)
         st.markdown("<span style='color:gray; font-size:14px;'>최근 15개의 학습 기록을 바탕으로 취약점을 심층 분석합니다.</span><br><br>", unsafe_allow_html=True)
         if st.button("✨ 팝업으로 AI 분석 리포트 열기", type="primary"):
