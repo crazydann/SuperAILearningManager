@@ -1,5 +1,6 @@
 streamlit
+supabase
 groq
 pandas
-gspread
-oauth2client
+plotly
+Pillow
