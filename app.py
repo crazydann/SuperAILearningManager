@@ -102,7 +102,7 @@ def analyze_vision_response(b64_encoded_jpeg, subject):
     prompt = f"이 {subject} 문제 풀이를 분석해서 틀린 부분을 찾아 힌트를 주고, 정답률을 %로 알려줘."
     completion = groq.chat.completions.create(
         # ✅ 에러 해결: preview 종료로 인해 정식 버전(instruct)으로 이름 변경 완료
-        model="llama-3.2-11b-vision-instruct", 
+        model="meta-llama/llama-4-scout-17b-16e-instruct", 
         messages=[{"role": "user", "content": [
             {"type": "text", "text": prompt},
             {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64_encoded_jpeg}"}}
