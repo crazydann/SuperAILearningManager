@@ -11,6 +11,8 @@ from PIL import Image
 
 import fitz  # PyMuPDF
 from pillow_heif import register_heif_opener
+from streamlit_autorefresh import st_autorefresh # 실시간 동기화 라이브러리
+
 register_heif_opener()
 
 # ---------------------------------------------------------
@@ -18,12 +20,15 @@ register_heif_opener()
 # ---------------------------------------------------------
 st.set_page_config(layout="wide", page_title="Focus-Super-AI Learning Manager")
 
+# 왼쪽/오른쪽 프레임 고정 및 제미나이 스타일 채팅 스크롤을 위한 CSS
 st.markdown("""
     <style>
-    .status-study { color: white; background-color: #ef4444; padding: 5px 10px; border-radius: 5px; font-weight: bold; text-align: center; }
-    .status-break { color: white; background-color: #22c55e; padding: 5px 10px; border-radius: 5px; font-weight: bold; text-align: center; }
-    .card { background-color: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); margin-bottom: 20px; border: 1px solid #e5e7eb; }
-    .section-title { font-size: 16px; font-weight: bold; color: #374151; margin-bottom: 15px; display: flex; align-items: center; gap: 8px; }
+    .status-study { color: white; background-color: #ef4444; padding: 5px 10px; border-radius: 5px; font-weight: bold; text-align: center; margin-bottom: 10px; }
+    .status-break { color: white; background-color: #22c55e; padding: 5px 10px; border-radius: 5px; font-weight: bold; text-align: center; margin-bottom: 10px; }
+    .card { background-color: white; padding: 15px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); margin-bottom: 15px; border: 1px solid #e5e7eb; }
+    .section-title { font-size: 15px; font-weight: bold; color: #374151; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+    /* 버튼 스타일 조정 (북마크 등) */
+    .stButton>button { width: 100%; border-radius: 6px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -49,11 +54,12 @@ def toggle_bookmark(log_id, current_val):
     supabase.table("logs").update({"is_bookmarked": not current_val}).eq("id", log_id).execute()
 
 def add_log(user_id, subject, question, answer, img_url=None, log_type="Text"):
-    supabase.table("logs").insert({
+    res = supabase.table("logs").insert({
         "user_id": user_id, "subject": subject, 
         "question": question, "answer": answer,
         "image_url": img_url, "log_type": log_type
     }).execute()
+    return res
 
 def get_logs(user_id):
     res = supabase.table("logs").select("*").eq("user_id", user_id).order("created_at", desc=True).execute()
@@ -64,18 +70,20 @@ def get_logs(user_id):
 # ---------------------------------------------------------
 def classify_subject(text):
     prompt = f"다음 질문이나 내용을 보고 '국어', '영어', '수학', '과학', '기타' 중 딱 하나의 단어로만 대답해:\n\n{text}"
-    completion = groq.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.1, max_tokens=10
-    )
-    res = completion.choices[0].message.content.strip()
-    for sub in ["국어", "영어", "수학", "과학"]:
-        if sub in res: return sub
-    return "기타"
+    try:
+        completion = groq.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.1, max_tokens=10
+        )
+        res = completion.choices[0].message.content.strip()
+        for sub in ["국어", "영어", "수학", "과학"]:
+            if sub in res: return sub
+        return "기타"
+    except:
+        return "기타"
 
 def get_text_response(status, subject, question):
-    """오프토픽 감지 프롬프트 적용 [Req 1]"""
     if status == "studying":
         system_content = f"""당신은 '{subject}' 전담 튜터입니다.
         중요: 만약 학생이 공부와 전혀 무관한 질문(게임, 잡담, 연예인 등)을 하면, 반드시 답변 맨 앞에 '[OFF_TOPIC]' 이라는 태그를 붙이고, "지금은 공부에 집중할 시간입니다! 공부와 관련된 질문을 해주세요."라고 단호하게 대답하세요."""
@@ -98,25 +106,31 @@ def get_text_response(status, subject, question):
 
 @st.cache_data(ttl=600)
 def get_ai_recommendations(logs_json):
-    """과거 질문 기반 추천 개념 생성 [Req 2]"""
     prompt = f"학생의 최근 질문 기록이야: {logs_json}. 이를 바탕으로 지금 공부하면 좋을 '추천 핵심 개념' 3가지를 불릿 포인트(-)로 짧게 제안해줘."
-    completion = groq.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.5, max_tokens=300
-    )
-    return completion.choices[0].message.content
+    try:
+        completion = groq.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.5, max_tokens=300
+        )
+        return completion.choices[0].message.content
+    except:
+        return "- 수학적 기초\n- 영어 문법\n- 국어 독해"
 
 @st.cache_data(ttl=600)
 def analyze_vulnerabilities(logs_json):
-    """학부모용 과목별 취약점 분석 [Req 3]"""
-    prompt = f"학생의 학습 기록이야: {logs_json}. 과목별로 학생이 자주 틀리거나 질문하는 '취약점'을 분석하고, 이를 극복하기 위한 조언을 작성해줘. 마크다운 형식으로 깔끔하게 정리해."
-    completion = groq.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.4, max_tokens=1024
-    )
-    return completion.choices[0].message.content
+    """토큰 초과 방지 및 안전한 에러 처리가 적용된 분석 함수"""
+    safe_logs = str(logs_json)[:4000] # 너무 긴 경우 4000자로 절삭
+    prompt = f"학생의 학습 기록이야: {safe_logs}\n\n과목별로 학생이 자주 틀리거나 질문하는 '취약점'을 분석하고, 이를 극복하기 위한 조언을 작성해줘. 마크다운으로 깔끔하게 정리해줘."
+    try:
+        completion = groq.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.4, max_tokens=1024
+        )
+        return completion.choices[0].message.content
+    except Exception as e:
+        return f"⚠️ 현재 AI 서버에 데이터가 너무 많거나 혼잡하여 분석이 지연되었습니다. 잠시 후 다시 시도해 주세요.\n\n*(시스템 메시지: {e})*"
 
 def analyze_vision_json(b64_encoded_jpeg):
     prompt = """
@@ -130,6 +144,14 @@ def analyze_vision_json(b64_encoded_jpeg):
     )
     return json.loads(completion.choices[0].message.content)
 
+def generate_and_grade_similar(core_concept, count):
+    prompt = f"핵심 개념 '{core_concept}'에 대한 객관식 또는 단답형 문제 {count}개를 내줘. 문제 아래에 바로 정답도 알려줘."
+    completion = groq.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[{"role": "user", "content": prompt}]
+    )
+    return completion.choices[0].message.content
+
 def get_standardized_image(uploaded_file):
     file_ext = uploaded_file.name.split('.')[-1].lower()
     if file_ext == 'pdf':
@@ -142,9 +164,63 @@ def get_standardized_image(uploaded_file):
     return img
 
 # ---------------------------------------------------------
-# 4. 학생 화면 (스크린샷 UI 완벽 반영)
+# 4. 팝업(Dialog) UI 설계
+# ---------------------------------------------------------
+@st.dialog("🎯 다중 문제 채점 결과", width="large")
+def grading_dialog(analysis_data, user_id, subject, img_url):
+    st.image(st.session_state.current_img_obj, use_container_width=True)
+    
+    user_info = get_user_info(user_id)
+    has_permission = user_info.get('detail_permission', False)
+    
+    if "sim_problems_cache" not in st.session_state:
+        st.session_state.sim_problems_cache = {}
+
+    results = analysis_data.get('results', [])
+    if not results:
+        st.warning("분석할 문제를 찾지 못했습니다. 사진을 다시 확인해주세요.")
+        return
+
+    for idx, item in enumerate(results):
+        q_num = item.get('question_number', f'{idx+1}번 문제')
+        st.subheader(f"📌 {q_num}")
+        
+        if item.get('is_correct', False): st.success(f"✅ {item.get('status_text', '정답입니다!')}")
+        else: st.error(f"❌ {item.get('status_text', '오답입니다.')}")
+
+        if has_permission:
+            with st.expander("🔍 풀이 해설 자세히 보기 (권한 허용됨)"):
+                st.write(item.get('detailed_explanation', '해설이 없습니다.'))
+        else:
+            st.warning("🔒 해설 자세히 보기 (학부모 대시보드에서 허용 필요)")
+
+        st.write("💡 이 개념을 완벽하게 익혀볼까요?")
+        c1, c2 = st.columns(2)
+        btn1_key, btn3_key = f"sim_1_{idx}", f"sim_3_{idx}"
+
+        if c1.button("유사 문제 1개 풀기", key=f"btn_1_{idx}"):
+            with st.spinner("문제 생성 중..."):
+                probs = generate_and_grade_similar(item.get('core_concept', '기본'), 1)
+                st.session_state.sim_problems_cache[btn1_key] = probs
+                add_log(user_id, subject, f"{q_num} 유사문제 1개", probs, log_type="Similar_Task")
+
+        if c2.button("유사 문제 3개 풀기", key=f"btn_3_{idx}"):
+            with st.spinner("문제 생성 중..."):
+                probs = generate_and_grade_similar(item.get('core_concept', '기본'), 3)
+                st.session_state.sim_problems_cache[btn3_key] = probs
+                add_log(user_id, subject, f"{q_num} 유사문제 3개", probs, log_type="Similar_Task")
+
+        if btn1_key in st.session_state.sim_problems_cache: st.info(st.session_state.sim_problems_cache[btn1_key])
+        if btn3_key in st.session_state.sim_problems_cache: st.info(st.session_state.sim_problems_cache[btn3_key])
+        st.divider()
+
+# ---------------------------------------------------------
+# 5. 학생 화면 (실시간 동기화 & 레이아웃 고정)
 # ---------------------------------------------------------
 def student_page():
+    # 실시간 동기화 (5초마다 자동 새로고침)
+    st_autorefresh(interval=5000, limit=None, key="student_refresh")
+    
     user = st.session_state['user']
     current_info = get_user_info(user['user_id'])
     status = current_info['status'] if current_info else 'studying'
@@ -153,103 +229,125 @@ def student_page():
     with t1: st.title("00:45:12 ⏱️")
     st.divider()
 
-    # 🚀 레이아웃: 왼쪽(UI), 중앙(채팅), 오른쪽(사진)
+    logs = get_logs(user['user_id'])
+    bm_dict = {row['id']: row['is_bookmarked'] for _, row in logs.iterrows()} if not logs.empty else {}
+
+    # 3단 고정 레이아웃
     left_col, center_col, right_col = st.columns([2.5, 4.5, 3])
 
+    # --- [왼쪽 프레임: 고정 영역 내 스크롤 지원] ---
     with left_col:
-        logs = get_logs(user['user_id'])
-        
-        # [UI 1] 질문 및 응답 수 차트
-        st.markdown("<div class='card'><div class='section-title'>💬 질문 및 응답 수</div>", unsafe_allow_html=True)
-        if not logs.empty:
-            sub_counts = logs['subject'].value_counts()
-            st.bar_chart(sub_counts, height=150)
-        st.markdown("</div>", unsafe_allow_html=True)
-        
-        # [UI 2] 지난 질의 (스크롤 적용) [Req 2]
-        st.markdown("<div class='card'><div class='section-title'>🕒 지난 질의</div>", unsafe_allow_html=True)
-        if not logs.empty:
-            with st.container(height=250): # 스크롤 가능한 컨테이너
-                for _, row in logs.head(10).iterrows(): # 10개까지 불러와서 3개만 보이고 나머진 스크롤
-                    with st.expander(f"Q: {str(row['question'])[:15]}..."):
-                        st.write(f"A: {row['answer']}")
-                        bm_label = "✅ 북마크 해제" if row.get('is_bookmarked') else "🔖 북마크 하기"
-                        if st.button(bm_label, key=f"bm_{row['id']}"):
-                            toggle_bookmark(row['id'], row.get('is_bookmarked', False))
-                            st.rerun()
-        st.markdown("</div>", unsafe_allow_html=True)
-        
-        # [UI 3] 추천 공부 개념 (AI 자동 분석) [Req 2]
-        st.markdown("<div class='card'><div class='section-title'>📖 추천 공부 개념</div>", unsafe_allow_html=True)
-        if not logs.empty:
-            recent_qs = logs['question'].head(5).tolist()
-            recs = get_ai_recommendations(str(recent_qs))
-            st.write(recs)
-        st.markdown("</div>", unsafe_allow_html=True)
-        
-        # [UI 4] Bookmarked Answers [Req 2]
-        st.markdown("<div class='card'><div class='section-title'>🔖 Bookmarked Answers</div>", unsafe_allow_html=True)
-        if not logs.empty and 'is_bookmarked' in logs.columns:
-            bm_logs = logs[logs['is_bookmarked'] == True]
-            if not bm_logs.empty:
+        with st.container(height=700, border=False):
+            st.markdown("<div class='card'><div class='section-title'>💬 질문 및 응답 수</div>", unsafe_allow_html=True)
+            if not logs.empty: st.bar_chart(logs['subject'].value_counts(), height=150)
+            st.markdown("</div>", unsafe_allow_html=True)
+            
+            st.markdown("<div class='card'><div class='section-title'>🕒 지난 질의 (최근 3개)</div>", unsafe_allow_html=True)
+            if not logs.empty:
+                with st.container(height=200): # 내부 스크롤
+                    for _, row in logs.head(10).iterrows():
+                        with st.expander(f"Q: {str(row['question'])[:15]}..."):
+                            st.write(f"A: {row['answer']}")
+            st.markdown("</div>", unsafe_allow_html=True)
+            
+            st.markdown("<div class='card'><div class='section-title'>📖 추천 공부 개념</div>", unsafe_allow_html=True)
+            if not logs.empty:
+                recent_qs = logs['question'].head(5).tolist()
+                st.write(get_ai_recommendations(str(recent_qs)))
+            st.markdown("</div>", unsafe_allow_html=True)
+            
+            st.markdown("<div class='card'><div class='section-title'>🔖 Bookmarked Answers</div>", unsafe_allow_html=True)
+            if not logs.empty and 'is_bookmarked' in logs.columns:
+                bm_logs = logs[logs['is_bookmarked'] == True]
                 for idx, row in enumerate(bm_logs.head(5).iterrows()):
                     st.write(f"{idx+1}. {str(row[1]['question'])[:15]}...")
-            else:
-                st.caption("북마크된 답변이 없습니다.")
-        st.markdown("</div>", unsafe_allow_html=True)
+            st.markdown("</div>", unsafe_allow_html=True)
 
+    # --- [중앙 프레임: 채팅창 상단 고정 (스크롤), 입력창 하단] ---
     with center_col:
-        if status == "studying": st.markdown('<div class="status-study">🔥 현재 집중 학습 중 (공부 관련 질문만 가능합니다)</div><br>', unsafe_allow_html=True)
-        else: st.markdown('<div class="status-break">🍀 즐거운 쉬는 시간 (자유롭게 대화하세요!)</div><br>', unsafe_allow_html=True)
+        if status == "studying": st.markdown('<div class="status-study">🔥 현재 집중 학습 중 (공부 관련 질문만 가능)</div>', unsafe_allow_html=True)
+        else: st.markdown('<div class="status-break">🍀 즐거운 쉬는 시간 (자유롭게 대화하세요!)</div>', unsafe_allow_html=True)
+        
+        chat_container = st.container(height=580, border=True) # 채팅 내용 스크롤 영역
         
         if "messages" not in st.session_state: st.session_state.messages = []
-        for msg in st.session_state.messages:
-            with st.chat_message(msg["role"]): st.markdown(msg["content"])
-
-        if prompt := st.chat_input("질문을 입력하세요..."):
-            st.chat_message("user").markdown(prompt)
-            st.session_state.messages.append({"role": "user", "content": prompt})
-            
-            with st.spinner("AI가 생각 중입니다..."):
-                auto_subject = classify_subject(prompt)
-                response, log_type = get_text_response(status, auto_subject, prompt) # [Req 1]
-                
-            st.chat_message("assistant").markdown(f"**[{auto_subject} 튜터]**\n{response}")
-            st.session_state.messages.append({"role": "assistant", "content": f"[{auto_subject}] {response}"})
-            add_log(user['user_id'], auto_subject, prompt, response, log_type=log_type)
-
-    with right_col:
-        st.markdown("<div class='card' style='text-align:center;'>", unsafe_allow_html=True)
-        st.info("📷 문제 사진을 올려주세요")
-        uploaded_file = st.file_uploader("", type=['jpg', 'jpeg', 'png', 'pdf', 'heic', 'heif'])
         
-        if uploaded_file:
-            try:
-                standard_img = get_standardized_image(uploaded_file)
-                st.image(standard_img, use_container_width=True)
-                
-                if st.button("사진 채점 및 분석 시작", use_container_width=True):
-                    with st.spinner("채점 중입니다..."):
-                        buffer = io.BytesIO()
-                        standard_img.save(buffer, format="JPEG", quality=85)
-                        b64_encoded = base64.b64encode(buffer.getvalue()).decode('utf-8')
+        with chat_container:
+            for msg in st.session_state.messages:
+                with st.chat_message(msg["role"]): 
+                    st.markdown(msg["content"])
+                    # 북마크 토글 버튼
+                    if msg["role"] == "assistant" and "log_id" in msg and msg["log_id"]:
+                        log_id = msg["log_id"]
+                        is_bm = bm_dict.get(log_id, False)
+                        btn_label = "⭐ 북마크 해제" if is_bm else "☆ 북마크 하기"
+                        if st.button(btn_label, key=f"chat_bm_{log_id}"):
+                            toggle_bookmark(log_id, is_bm)
+                            st.rerun()
+
+        # 입력창은 컨테이너 바깥(아래)에 위치하여 항상 하단에 고정됨
+        if prompt := st.chat_input("질문을 입력하세요..."):
+            st.session_state.messages.append({"role": "user", "content": prompt})
+            st.rerun()
+
+        if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
+            prompt = st.session_state.messages[-1]["content"]
+            with chat_container:
+                with st.chat_message("assistant"):
+                    with st.spinner("AI가 생각 중입니다..."):
+                        auto_subject = classify_subject(prompt)
+                        response, log_type = get_text_response(status, auto_subject, prompt)
+                        st.markdown(f"**[{auto_subject} 튜터]**\n{response}")
                         
-                        file_path = f"{user['user_id']}/{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
-                        supabase.storage.from_("problem_images").upload(file_path, buffer.getvalue())
-                        img_url = supabase.storage.from_("problem_images").get_public_url(file_path)
+                        res = add_log(user['user_id'], auto_subject, prompt, response, log_type=log_type)
+                        new_log_id = res.data[0]['id'] if res.data else None
                         
-                        auto_subject = classify_subject("이 문제 사진의 과목이 뭐야?") 
-                        analysis_data = analyze_vision_json(b64_encoded)
-                        add_log(user['user_id'], auto_subject, "사진 채점", json.dumps(analysis_data, ensure_ascii=False), img_url, "Vision")
-                        st.success("채점이 완료되었습니다. DB에 저장되었습니다.")
-            except Exception as e:
-                st.error(f"오류: {e}")
-        st.markdown("</div>", unsafe_allow_html=True)
+            st.session_state.messages.append({"role": "assistant", "content": f"**[{auto_subject} 튜터]**\n{response}", "log_id": new_log_id})
+            st.rerun()
+
+    # --- [오른쪽 프레임: 사진 업로드 (고정)] ---
+    with right_col:
+        with st.container(height=700, border=False):
+            st.markdown("<div class='card' style='text-align:center;'>", unsafe_allow_html=True)
+            st.info("📷 문제 사진을 올려주세요\n여러 문제가 있어도 AI가 한 번에 채점해드려요!")
+            uploaded_file = st.file_uploader("", type=['jpg', 'jpeg', 'png', 'pdf', 'heic', 'heif'])
+            
+            if uploaded_file:
+                try:
+                    standard_img = get_standardized_image(uploaded_file)
+                    st.session_state.current_img_obj = standard_img
+                    st.image(standard_img, use_container_width=True)
+                    
+                    if st.button("사진 채점 및 분석 시작", use_container_width=True):
+                        if "sim_problems_cache" in st.session_state:
+                            st.session_state.sim_problems_cache.clear()
+                            
+                        with st.spinner("채점 중입니다..."):
+                            buffer = io.BytesIO()
+                            standard_img.save(buffer, format="JPEG", quality=85)
+                            jpeg_bytes = buffer.getvalue()
+                            b64_encoded = base64.b64encode(jpeg_bytes).decode('utf-8')
+                            
+                            file_path = f"{user['user_id']}/{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+                            supabase.storage.from_("problem_images").upload(file_path, jpeg_bytes)
+                            img_url = supabase.storage.from_("problem_images").get_public_url(file_path)
+                            
+                            auto_subject = classify_subject("이 문제 사진의 과목이 뭐야?") 
+                            analysis_data = analyze_vision_json(b64_encoded)
+                            
+                            add_log(user['user_id'], auto_subject, f"사진 채점 (다중)", json.dumps(analysis_data, ensure_ascii=False), img_url, "Vision")
+                            grading_dialog(analysis_data, user['user_id'], auto_subject, img_url)
+                except Exception as e:
+                    st.error(f"오류: {e}")
+            st.markdown("</div>", unsafe_allow_html=True)
 
 # ---------------------------------------------------------
-# 5. 학부모 화면 (오프토픽 감지 및 취약점 분석 반영)
+# 6. 학부모 화면 (실시간 동기화 & 최적화된 리포트)
 # ---------------------------------------------------------
 def parent_page():
+    # 실시간 동기화 (5초마다 자동 새로고침)
+    st_autorefresh(interval=5000, limit=None, key="parent_refresh")
+    
     st.title("👨‍👩‍👧‍👦 학부모 모니터링 대시보드")
     res = supabase.table("users").select("*").eq("role", "student").execute()
     students = res.data if res.data else []
@@ -258,26 +356,24 @@ def parent_page():
         target_id = st.selectbox("자녀 선택", [u['user_id'] for u in students])
         target_user = next(u for u in students if u['user_id'] == target_id)
         
-        # [상태 제어]
         st.subheader("⚙️ 자녀 학습 상태 제어")
         c1, c2 = st.columns(2)
         with c1:
             st.info(f"현재 상태: {target_user['status']}")
             if target_user['status'] == 'studying':
-                if st.button("☕️ 쉬는 시간으로 변경 (자유 채팅 허용)"): update_user_status(target_id, 'status', 'break'); st.rerun()
+                if st.button("☕️ 쉬는 시간으로 변경"): update_user_status(target_id, 'status', 'break'); st.rerun()
             else:
-                if st.button("🔥 공부 시간으로 변경 (딴짓 차단)"): update_user_status(target_id, 'status', 'studying'); st.rerun()
+                if st.button("🔥 공부 시간으로 변경"): update_user_status(target_id, 'status', 'studying'); st.rerun()
         with c2:
             current_perm = target_user.get('detail_permission', False)
             st.info(f"문제 해설 권한: {'✅ 켜짐' if current_perm else '🔒 꺼짐'}")
-            if st.button("권한 토글"):
+            if st.button("권한 토글 (On/Off)"):
                 update_user_status(target_id, 'detail_permission', not current_perm); st.rerun()
                 
         st.divider()
         logs = get_logs(target_id)
         
         if not logs.empty:
-            # [Req 1] 딴짓(Off-Topic) 모니터링
             st.subheader("🚨 집중도 모니터링 (공부 중 딴짓 기록)")
             off_topics = logs[logs['log_type'] == 'Off_Topic']
             if not off_topics.empty:
@@ -287,20 +383,17 @@ def parent_page():
                 st.success("자녀가 공부 시간에 완벽하게 집중하고 있습니다!")
                 
             st.divider()
-            
-            # [Req 3] AI 과목별 취약점 분석
             st.subheader("🧠 AI 과목별 취약점 분석 리포트")
             if st.button("최신 학습 데이터로 분석하기"):
-                with st.spinner("AI가 자녀의 모든 학습 로그를 분석하고 있습니다..."):
-                    # 데이터가 너무 길면 토큰 초과가 나므로 최근 30개만 추출
-                    recent_logs = logs[['subject', 'question', 'answer']].head(30).to_dict('records')
-                    analysis_report = analyze_vulnerabilities(str(recent_logs))
-                    st.markdown(analysis_report)
+                with st.spinner("AI가 자녀의 핵심 학습 로그를 분석하고 있습니다..."):
+                    # [수정] 토큰 초과 에러 해결을 위해 최근 15개의 질문과 과목만 발췌하여 보냄
+                    recent_logs = logs[['subject', 'question']].head(15).to_dict('records')
+                    st.markdown(analyze_vulnerabilities(recent_logs))
         else:
             st.warning("아직 기록된 학습 로그가 없습니다.")
 
 # ---------------------------------------------------------
-# 6. 메인 실행 제어
+# 7. 메인 실행 제어
 # ---------------------------------------------------------
 if "logged_in" not in st.session_state: st.session_state['logged_in'] = False
 
